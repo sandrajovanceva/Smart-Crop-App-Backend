@@ -3,25 +3,45 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager
+from flasgger import Swagger
 from app.config import Config
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
-jwt = JWTManager() 
+jwt = JWTManager()
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
+    # Swagger конфигурација
+    app.config['SWAGGER'] = {
+        'title': 'Smart Crops API',
+        'uiversion': 3,
+        'version': '1.0.0',
+        'description': 'API документација за Smart Crops Backend',
+        'securityDefinitions': {
+            'BearerAuth': {
+                'type': 'apiKey',
+                'name': 'Authorization',
+                'in': 'header',
+                'description': 'Внеси: Bearer <JWT token>'
+            }
+        }
+    }
+
     CORS(app)
     db.init_app(app)
     bcrypt.init_app(app)
     jwt.init_app(app)
+    Swagger(app)
 
     from app.routes.advisor import advisor_bp
     from app.routes.auth import auth_bp
+    from app.routes.fields import fields_bp
     app.register_blueprint(advisor_bp, url_prefix='/api/advisor')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(fields_bp, url_prefix='/api/fields')
 
     from .models import TokenBlocklist
 
@@ -30,7 +50,7 @@ def create_app():
         jti = jwt_payload["jti"]
         token = TokenBlocklist.query.filter_by(jti=jti).first()
         return token is not None
-    
+
     @jwt.expired_token_loader
     def expired_token_callback(jwt_header, jwt_payload):
         return jsonify({"success": False, "error": "Token has expired"}), 401
@@ -38,7 +58,7 @@ def create_app():
     @jwt.invalid_token_loader
     def invalid_token_callback(error):
         return jsonify({"success": False, "error": "Invalid token"}), 401
-    
+
     @jwt.unauthorized_loader
     def missing_token_callback(error):
         return jsonify({"success": False, "error": "Authorization token is required"}), 401
