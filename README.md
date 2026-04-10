@@ -11,34 +11,10 @@ You can test whether the app is up and running by calling the endpoint below usi
 
 > **Note:** You can also use postman to call the endpoint 
 
-Available endpoints:
-``` 
-curl -X POST http://127.0.0.1:5000/api/auth/register
-    -H "Content-Type: application/json"
-    -d '{
-        "email": "test@gmail.com",
-        "password": "pass1234!",
-        "fullName": "John Doe"
-    }'
-```
-```
-curl -X POST http://127.0.0.1:5000/api/auth/login
-    -H "Content-Type: application/json"
-    -d '{
-        "email": "test@gmail.com",
-        "password": "pass1234!"
-    }'
-```
+## Available endpoints (swagger)
 
-```
-curl -X POST http://127.0.0.1:5000/api/auth/logout 
-    -H "Authorization: Bearer <access-token>"
-```
-
-```
-curl -X GET http://127.0.0.1:5000/api/auth/me 
-    -H "Authorization: Bearer <access-token>"
-```
+You can access Swagger API documentation by following the link in the browser:
+`http://localhost:5000/apidocs/`
 
 ## Keys to be configured:
 
