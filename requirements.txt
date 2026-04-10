@@ -6,3 +6,4 @@ psycopg2-binary==2.9.9
 flask-bcrypt==1.0.1
 flask-jwt-extended==4.6.0
 validators==0.22.0
+flasgger==0.9.7.1
