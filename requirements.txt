@@ -7,3 +7,6 @@ flask-bcrypt==1.0.1
 flask-jwt-extended==4.6.0
 validators==0.22.0
 flasgger==0.9.7.1
+openai==1.54.0
+httpx==0.27.2
+requests==2.32.3
