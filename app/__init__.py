@@ -10,11 +10,11 @@ db = SQLAlchemy()
 bcrypt = Bcrypt()
 jwt = JWTManager()
 
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Swagger конфигурација
     app.config['SWAGGER'] = {
         'title': 'Smart Crops API',
         'uiversion': 3,
@@ -27,7 +27,8 @@ def create_app():
                 'in': 'header',
                 'description': 'Внеси: Bearer <JWT token>'
             }
-        }
+        },
+        'security': [{'BearerAuth': []}]
     }
 
     CORS(app)
@@ -39,9 +40,12 @@ def create_app():
     from app.routes.advisor import advisor_bp
     from app.routes.auth import auth_bp
     from app.routes.fields import fields_bp
+    from app.routes.weather import weather_bp
+
     app.register_blueprint(advisor_bp, url_prefix='/api/advisor')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(fields_bp, url_prefix='/api/fields')
+    app.register_blueprint(weather_bp, url_prefix='/api/weather')
 
     from .models import TokenBlocklist
 
@@ -70,6 +74,7 @@ def create_app():
         from app.models.Crop_analysis import CropAnalysis
         from app.models.Weather_data import WeatherData
         from app.models.Report import Report
+        from app.models.AdviceCache import AdviceCache
         db.create_all()
 
     return app
