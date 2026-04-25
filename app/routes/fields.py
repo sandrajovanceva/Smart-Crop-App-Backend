@@ -6,7 +6,8 @@ from app.services.field_service import (
     get_field_by_id,
     create_field,
     update_field,
-    delete_field
+    delete_field,
+    import_fields_from_csv
 )
 from app.utils.validators import validate_field_input
 
@@ -143,6 +144,60 @@ def add_field():
         return jsonify({"success": False, "error": error}), 400
 
     return jsonify({"success": True, "message": "Field created successfully", "field": field}), 201
+
+
+@fields_bp.route('/upload', methods=['POST'])
+@jwt_required()
+def upload_fields_csv():
+    """
+    Прикачи CSV фајл со ниви
+    ---
+    tags:
+      - Fields
+    security:
+      - BearerAuth: []
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: file
+        type: file
+        required: true
+        description: CSV фајл со колони name, size, location, crop_type, soil_type, irrigation_type, notes, planting_date
+    responses:
+      201:
+        description: Нивите се успешно импортирани
+      400:
+        description: Невалиден CSV фајл или податоци
+      401:
+        description: Неавторизиран пристап
+    """
+    user_id = get_jwt_identity()
+
+    if 'file' not in request.files:
+        return jsonify({"success": False, "error": "CSV file is required"}), 400
+
+    csv_file = request.files['file']
+    if not csv_file or not csv_file.filename:
+        return jsonify({"success": False, "error": "CSV file is required"}), 400
+
+    if not csv_file.filename.lower().endswith('.csv'):
+        return jsonify({"success": False, "error": "Only CSV files are allowed"}), 400
+
+    fields, errors = import_fields_from_csv(csv_file.stream, user_id)
+    if errors:
+        return jsonify({
+            "success": False,
+            "error": "CSV import failed",
+            "details": errors
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "message": "Fields imported successfully",
+        "imported_count": len(fields),
+        "fields": fields
+    }), 201
 
 
 @fields_bp.route('/<int:field_id>', methods=['PUT'])
