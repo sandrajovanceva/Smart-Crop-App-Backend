@@ -4,6 +4,8 @@ from datetime import datetime
 from collections import defaultdict
 from flask import current_app
 
+from app.errors import ConfigurationError, ExternalServiceError
+
 
 class WeatherService:
     """Сервис за комуникација со OpenWeather API (бесплатен план).
@@ -15,7 +17,7 @@ class WeatherService:
     def __init__(self):
         self.api_key = os.getenv("WEATHER_API_KEY")
         if not self.api_key:
-            raise ValueError("WEATHER_API_KEY не е поставен во .env фајлот")
+            raise ConfigurationError("WEATHER_API_KEY не е поставен во .env фајлот")
 
     def get_weather_by_location(self, location_name, country_code="MK"):
         """Враќа време + прогноза + земјоделски сигнали за дадена локација.
@@ -74,7 +76,7 @@ class WeatherService:
             ]
         except requests.RequestException as e:
             current_app.logger.error(f"Geocoding search error: {e}")
-            return []
+            raise ExternalServiceError("Не може да се пребараат временски локации") from e
 
     def _geocode(self, location_name, country_code):
         """Конвертира име на место во координати преку Geocoding API."""
@@ -97,7 +99,7 @@ class WeatherService:
             }
         except requests.RequestException as e:
             current_app.logger.error(f"Geocoding error: {e}")
-            return None
+            raise ExternalServiceError("Не може да се добијат координати од временскиот сервис") from e
 
     def _fetch_current(self, lat, lon):
         return self._request("weather", {"lat": lat, "lon": lon})
@@ -109,9 +111,12 @@ class WeatherService:
         params["appid"] = self.api_key
         params["units"] = "metric"
         params["lang"] = "mk"
-        r = requests.get(f"{self.BASE_URL}/{endpoint}", params=params, timeout=10)
-        r.raise_for_status()
-        return r.json()
+        try:
+            r = requests.get(f"{self.BASE_URL}/{endpoint}", params=params, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            raise ExternalServiceError("Не може да се добијат временски податоци") from e
 
     @staticmethod
     def _format_current(data):

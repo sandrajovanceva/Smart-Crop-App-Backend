@@ -7,6 +7,7 @@ from flask_jwt_extended import (
 )
 
 from app import db, bcrypt
+from app.errors import BadRequestError, ConflictError, NotFoundError, UnauthorizedError
 from app.models.User import User
 from app.models.TokenBlocklist import TokenBlocklist
 from app.utils.validators import validate_register_input, validate_login_input
@@ -48,20 +49,20 @@ def register():
       409:
         description: Емаилот веќе постои
     """
-    data = request.get_json()
+    data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"success": False, "error": "Invalid JSON body"}), 400
+        raise BadRequestError("Invalid JSON body")
 
     valid, error = validate_register_input(data)
     if not valid:
-        return jsonify({"success": False, "error": error}), 400
+        raise BadRequestError(error)
     
     email = data["email"].strip()
 
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
-        return jsonify({"success": False, "error": "Email already exists"}), 409
+        raise ConflictError("Email already exists")
 
     password_hash = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
     user = User(email=email, password_hash=password_hash, full_name=data["fullname"])
@@ -107,14 +108,14 @@ def login():
       401:
         description: Погрешен емаил или лозинка
     """
-    data = request.get_json()
+    data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"success": False, "error": "Invalid JSON body"}), 400
-    
+        raise BadRequestError("Invalid JSON body")
+
     valid, error = validate_login_input(data)
     if not valid:
-        return jsonify({"success": False, "error": error}), 400
+        raise BadRequestError(error)
 
     email = data["email"].strip()
     password = data["password"]
@@ -122,7 +123,7 @@ def login():
     user = User.query.filter_by(email=email).first()
 
     if not user or not bcrypt.check_password_hash(user.password_hash, password):
-        return jsonify({"success": False, "error": "Invalid email or password"}), 401
+        raise UnauthorizedError("Invalid email or password")
     
     access_token = create_access_token(
         identity=str(user.id),
@@ -187,7 +188,7 @@ def me():
     user = User.query.get(user_id)
 
     if not user:
-        return jsonify({"success": False, "error": "User not found"}), 404
+        raise NotFoundError("User not found")
 
     return jsonify({
         "success": True,

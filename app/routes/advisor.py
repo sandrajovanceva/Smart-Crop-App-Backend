@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from flasgger import swag_from
 
+from app.errors import BadRequestError, NotFoundError
 from app.services.ai_service import AIService
 from app.services.weather_service import WeatherService
 from app.services.cache_service import CacheService
@@ -49,7 +50,10 @@ def health():
     },
 })
 def smart_advice():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if data is None:
+        raise BadRequestError("Invalid JSON body")
+
     crop = data.get("crop")
     location = data.get("location")
     country = data.get("country", "MK")
@@ -57,55 +61,51 @@ def smart_advice():
     force_refresh = data.get("force_refresh", False)
 
     if not crop:
-        return jsonify({"error": "Полето 'crop' е задолжително"}), 400
+        raise BadRequestError("Полето 'crop' е задолжително")
 
     if not location:
-        return jsonify({"error": "Полето 'location' е задолжително"}), 400
+        raise BadRequestError("Полето 'location' е задолжително")
 
-    try:
-        if not force_refresh:
-            cached_response = CacheService.get_cached_advice(
-                crop=crop,
-                location=location,
-                country=country,
-                question=question,
-            )
-
-            if cached_response:
-                cached_response = {**cached_response, "from_cache": True}
-                return jsonify(cached_response), 200
-
-        weather_service = WeatherService()
-        weather_data = weather_service.get_weather_by_location(
-            location_name=location,
-            country_code=country
-        )
-
-        if not weather_data:
-            return jsonify({"error": f"Местото '{location}' не е пронајдено"}), 404
-
-        ai_service = AIService()
-        advice = ai_service.get_crop_advice(
-            crop_name=crop,
-            weather_data=weather_data,
-            user_question=question,
-        )
-
-        response_data = {
-            "weather": weather_data,
-            "advice": advice,
-            "from_cache": False,
-        }
-
-        CacheService.save_advice(
+    if not force_refresh:
+        cached_response = CacheService.get_cached_advice(
             crop=crop,
             location=location,
             country=country,
             question=question,
-            response_data=response_data,
         )
 
-        return jsonify(response_data), 200
+        if cached_response:
+            cached_response = {**cached_response, "from_cache": True}
+            return jsonify(cached_response), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Грешка: {str(e)}"}), 500
+    weather_service = WeatherService()
+    weather_data = weather_service.get_weather_by_location(
+        location_name=location,
+        country_code=country
+    )
+
+    if not weather_data:
+        raise NotFoundError(f"Местото '{location}' не е пронајдено")
+
+    ai_service = AIService()
+    advice = ai_service.get_crop_advice(
+        crop_name=crop,
+        weather_data=weather_data,
+        user_question=question,
+    )
+
+    response_data = {
+        "weather": weather_data,
+        "advice": advice,
+        "from_cache": False,
+    }
+
+    CacheService.save_advice(
+        crop=crop,
+        location=location,
+        country=country,
+        question=question,
+        response_data=response_data,
+    )
+
+    return jsonify(response_data), 200
