@@ -4,6 +4,8 @@ import re
 from openai import OpenAI
 from flask import current_app
 
+from app.errors import ConfigurationError, ExternalServiceError
+
 
 class AIService:
     """AI сервис за земјоделски совети - користи Google Gemini API."""
@@ -13,7 +15,7 @@ class AIService:
     def __init__(self):
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise ValueError("GEMINI_API_KEY не е поставен во .env фајлот")
+            raise ConfigurationError("GEMINI_API_KEY не е поставен во .env фајлот")
 
         self.client = OpenAI(
             api_key=api_key,
@@ -53,10 +55,10 @@ class AIService:
         except json.JSONDecodeError as e:
             current_app.logger.error(f"AI response not valid JSON: {e}")
             current_app.logger.error(f"Raw response was: {raw}")
-            raise ValueError(f"AI моделот не врати валиден JSON одговор. Raw: {raw[:200]}")
+            raise ExternalServiceError("AI моделот не врати валиден JSON одговор") from e
         except Exception as e:
             current_app.logger.error(f"AI service error: {e}")
-            raise
+            raise ExternalServiceError("AI сервисот моментално не е достапен") from e
 
     @staticmethod
     def _extract_json(text):

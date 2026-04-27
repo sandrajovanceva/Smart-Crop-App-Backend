@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
+from app.errors import BadRequestError
 from app.services.field_service import (
     get_all_fields,
     get_field_by_id,
@@ -69,9 +70,7 @@ def get_field(field_id):
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
-    field, error = get_field_by_id(field_id, user_id)
-    if error:
-        return jsonify({"success": False, "error": error}), 404
+    field = get_field_by_id(field_id, user_id)
     return jsonify({"success": True, "field": field}), 200
 
 
@@ -130,18 +129,16 @@ def add_field():
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
-    data = request.get_json()
+    data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"success": False, "error": "Invalid JSON body"}), 400
+        raise BadRequestError("Invalid JSON body")
 
     valid, error = validate_field_input(data)
     if not valid:
-        return jsonify({"success": False, "error": error}), 400
+        raise BadRequestError(error)
 
-    field, error = create_field(data, user_id)
-    if error:
-        return jsonify({"success": False, "error": error}), 400
+    field = create_field(data, user_id)
 
     return jsonify({"success": True, "message": "Field created successfully", "field": field}), 201
 
@@ -175,22 +172,16 @@ def upload_fields_csv():
     user_id = get_jwt_identity()
 
     if 'file' not in request.files:
-        return jsonify({"success": False, "error": "CSV file is required"}), 400
+        raise BadRequestError("CSV file is required")
 
     csv_file = request.files['file']
     if not csv_file or not csv_file.filename:
-        return jsonify({"success": False, "error": "CSV file is required"}), 400
+        raise BadRequestError("CSV file is required")
 
     if not csv_file.filename.lower().endswith('.csv'):
-        return jsonify({"success": False, "error": "Only CSV files are allowed"}), 400
+        raise BadRequestError("Only CSV files are allowed")
 
-    fields, errors = import_fields_from_csv(csv_file.stream, user_id)
-    if errors:
-        return jsonify({
-            "success": False,
-            "error": "CSV import failed",
-            "details": errors
-        }), 400
+    fields = import_fields_from_csv(csv_file.stream, user_id)
 
     return jsonify({
         "success": True,
@@ -257,14 +248,12 @@ def edit_field(field_id):
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
-    data = request.get_json()
+    data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"success": False, "error": "Invalid JSON body"}), 400
+        raise BadRequestError("Invalid JSON body")
 
-    field, error = update_field(field_id, data, user_id)
-    if error:
-        return jsonify({"success": False, "error": error}), 404 if "not found" in error else 400
+    field = update_field(field_id, data, user_id)
 
     return jsonify({"success": True, "message": "Field updated successfully", "field": field}), 200
 
@@ -294,8 +283,6 @@ def remove_field(field_id):
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
-    success, error = delete_field(field_id, user_id)
-    if not success:
-        return jsonify({"success": False, "error": error}), 404
+    delete_field(field_id, user_id)
 
     return jsonify({"success": True, "message": "Field deleted successfully"}), 200

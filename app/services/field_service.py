@@ -3,6 +3,7 @@ import io
 from datetime import datetime
 
 from app import db
+from app.errors import BadRequestError, NotFoundError
 from app.models.Field import Field
 from app.utils.validators import validate_field_input
 
@@ -20,32 +21,30 @@ def get_all_fields(user_id):
 def get_field_by_id(field_id, user_id):
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
-        return None, "Field not found"
-    return field.to_dict(), None
+        raise NotFoundError("Field not found")
+    return field.to_dict()
 
 
 def create_field(data, user_id):
-    planting_date, error = _parse_planting_date(data.get("planting_date"))
-    if error:
-        return None, error
+    planting_date = _parse_planting_date(data.get("planting_date"))
 
     field = _create_field_model(data, user_id, planting_date)
 
     db.session.add(field)
     db.session.commit()
-    return field.to_dict(), None
+    return field.to_dict()
 
 
 def update_field(field_id, data, user_id):
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
-        return None, "Field not found"
+        raise NotFoundError("Field not found")
 
     if "name" in data:
         field.name = data["name"].strip()
     if "size" in data:
         if not isinstance(data["size"], (int, float)) or data["size"] <= 0:
-            return None, "Size must be a positive number"
+            raise BadRequestError("Size must be a positive number")
         field.size = data["size"]
     if "location" in data:
         field.location = data["location"].strip()
@@ -58,23 +57,20 @@ def update_field(field_id, data, user_id):
     if "notes" in data:
         field.notes = data["notes"]
     if "planting_date" in data:
-        try:
-            field.planting_date = datetime.strptime(data["planting_date"], "%Y-%m-%d").date()
-        except ValueError:
-            return None, "Invalid date format. Use YYYY-MM-DD"
+        field.planting_date = _parse_planting_date(data["planting_date"])
 
     db.session.commit()
-    return field.to_dict(), None
+    return field.to_dict()
 
 
 def delete_field(field_id, user_id):
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
-        return False, "Field not found"
+        raise NotFoundError("Field not found")
 
     db.session.delete(field)
     db.session.commit()
-    return True, None
+
 
 def import_fields_from_csv(file_stream, user_id):
     try:
@@ -82,16 +78,16 @@ def import_fields_from_csv(file_stream, user_id):
         reader = csv.DictReader(text_stream)
         header_map = _build_csv_header_map(reader.fieldnames)
     except UnicodeDecodeError:
-        return None, ["CSV file must be UTF-8 encoded"]
+        raise BadRequestError("CSV file must be UTF-8 encoded")
     except csv.Error as error:
-        return None, [f"Invalid CSV file: {error}"]
+        raise BadRequestError(f"Invalid CSV file: {error}")
 
     if not header_map:
-        return None, ["CSV file is empty or missing a header row"]
+        raise BadRequestError("CSV file is empty or missing a header row")
 
     missing_columns = [column for column in REQUIRED_CSV_COLUMNS if column not in header_map]
     if missing_columns:
-        return None, [f"Missing required CSV columns: {', '.join(missing_columns)}"]
+        raise BadRequestError(f"Missing required CSV columns: {', '.join(missing_columns)}")
 
     fields = []
     errors = []
@@ -107,37 +103,38 @@ def import_fields_from_csv(file_stream, user_id):
                 errors.extend(row_errors)
                 continue
 
-            planting_date, error = _parse_planting_date(data.get("planting_date"))
-            if error:
-                errors.append(f"Row {row_number}: {error}")
+            try:
+                planting_date = _parse_planting_date(data.get("planting_date"))
+            except BadRequestError as error:
+                errors.append(f"Row {row_number}: {error.message}")
                 continue
 
             fields.append(_create_field_model(data, user_id, planting_date))
     except UnicodeDecodeError:
-        return None, ["CSV file must be UTF-8 encoded"]
+        raise BadRequestError("CSV file must be UTF-8 encoded")
     except csv.Error as error:
-        return None, [f"Invalid CSV file: {error}"]
+        raise BadRequestError(f"Invalid CSV file: {error}")
 
     if errors:
-        return None, errors
+        raise BadRequestError("CSV import failed", details=errors)
 
     if not fields:
-        return None, ["CSV file does not contain any field rows"]
+        raise BadRequestError("CSV file does not contain any field rows")
 
     db.session.add_all(fields)
     db.session.commit()
 
-    return [field.to_dict() for field in fields], None
+    return [field.to_dict() for field in fields]
 
 
 def _parse_planting_date(value):
     if not value:
-        return None, None
+        return None
 
     try:
-        return datetime.strptime(value, "%Y-%m-%d").date(), None
-    except ValueError:
-        return None, "Invalid date format. Use YYYY-MM-DD"
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise BadRequestError("Invalid date format. Use YYYY-MM-DD")
 
 
 def _create_field_model(data, user_id, planting_date):

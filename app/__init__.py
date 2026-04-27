@@ -1,10 +1,11 @@
-from flask import Flask, jsonify
+from flask import Flask
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager
 from flasgger import Swagger
 from app.config import Config
+from app.errors import error_response, register_error_handlers
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
@@ -36,6 +37,7 @@ def create_app():
     bcrypt.init_app(app)
     jwt.init_app(app)
     Swagger(app)
+    register_error_handlers(app)
 
     from app.routes.advisor import advisor_bp
     from app.routes.auth import auth_bp
@@ -57,15 +59,15 @@ def create_app():
 
     @jwt.expired_token_loader
     def expired_token_callback(jwt_header, jwt_payload):
-        return jsonify({"success": False, "error": "Token has expired"}), 401
+        return error_response("Token has expired", 401, "token_expired")
 
     @jwt.invalid_token_loader
     def invalid_token_callback(error):
-        return jsonify({"success": False, "error": "Invalid token"}), 401
+        return error_response("Invalid token", 401, "invalid_token")
 
     @jwt.unauthorized_loader
     def missing_token_callback(error):
-        return jsonify({"success": False, "error": "Authorization token is required"}), 401
+        return error_response("Authorization token is required", 401, "authorization_required")
 
     with app.app_context():
         from app.models.User import User
