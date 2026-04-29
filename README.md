@@ -24,4 +24,5 @@ DATABASE_URL=postgresql://postgres:123@localhost:5433/smartcrop
 OPENAI_API_KEY=api-key
 WEATHER_API_KEY=weather-api-key
 JWT_SECRET_KEY=6d4b9f10199947df8cbfe393cc6d6a81
+LOG_LEVEL=INFO
 ```

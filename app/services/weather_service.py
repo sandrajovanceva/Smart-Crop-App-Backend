@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 from datetime import datetime
 from collections import defaultdict
 from flask import current_app
@@ -26,6 +27,16 @@ class WeatherService:
         :param country_code: ISO 3166 код на држава (default 'MK' за Македонија)
         :return: dict со сите податоци, или None ако локацијата не е најдена
         """
+        current_app.logger.info(
+            "get weather by location service started",
+            extra={
+                "class_name": self.__class__.__name__,
+                "event": "weather_service.get_by_location_started",
+                "location": location_name,
+                "country": country_code
+            }
+        )
+
         coords = self._geocode(location_name, country_code)
         if not coords:
             return None
@@ -54,6 +65,16 @@ class WeatherService:
         """Опциона помошна метода - враќа листа на можни локации.
         Корисна ако корисникот напише нешто двосмислено (пр. 'Ново Село').
         """
+        current_app.logger.info(
+            "search weather locations service started",
+            extra={
+                "class_name": self.__class__.__name__,
+                "event": "weather_service.search_locations_started",
+                "query": query,
+                "country": country_code,
+                "limit": limit
+            }
+        )
 
         params = {
             "q": f"{query},{country_code}" if country_code else query,
@@ -75,7 +96,15 @@ class WeatherService:
                 for item in data
             ]
         except requests.RequestException as e:
-            current_app.logger.error(f"Geocoding search error: {e}")
+            current_app.logger.error(
+                f"Geocoding search error: {e}",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "weather_service.geocoding_search_failed",
+                    "query": query,
+                    "country": country_code
+                }
+            )
             raise ExternalServiceError("Не може да се пребараат временски локации") from e
 
     def _geocode(self, location_name, country_code):
@@ -98,7 +127,15 @@ class WeatherService:
                 "state": data[0].get("state"),
             }
         except requests.RequestException as e:
-            current_app.logger.error(f"Geocoding error: {e}")
+            current_app.logger.error(
+                f"Geocoding error: {e}",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "weather_service.geocoding_failed",
+                    "location": location_name,
+                    "country": country_code
+                }
+            )
             raise ExternalServiceError("Не може да се добијат координати од временскиот сервис") from e
 
     def _fetch_current(self, lat, lon):
@@ -111,11 +148,33 @@ class WeatherService:
         params["appid"] = self.api_key
         params["units"] = "metric"
         params["lang"] = "mk"
+        started_at = time.perf_counter()
         try:
             r = requests.get(f"{self.BASE_URL}/{endpoint}", params=params, timeout=10)
             r.raise_for_status()
+            current_app.logger.info(
+                "weather provider request completed",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "weather.provider_request_completed",
+                    "provider": "openweathermap",
+                    "endpoint": endpoint,
+                    "status_code": r.status_code,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2)
+                }
+            )
             return r.json()
         except requests.RequestException as e:
+            current_app.logger.error(
+                "Weather request error",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "weather.provider_request_failed",
+                    "provider": "openweathermap",
+                    "endpoint": endpoint,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2)
+                }
+            )
             raise ExternalServiceError("Не може да се добијат временски податоци") from e
 
     @staticmethod
