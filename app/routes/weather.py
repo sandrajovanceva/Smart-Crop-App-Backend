@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import jwt_required
 from flasgger import swag_from
 from app.errors import BadRequestError, NotFoundError
@@ -40,6 +40,14 @@ weather_bp = Blueprint("weather", __name__)
 def weather_by_location():
     location = request.args.get("location", type=str)
     country = request.args.get("country", default="MK", type=str)
+    current_app.logger.info(
+        "weather by location request received",
+        extra={
+            "event": "weather.by_location_started",
+            "location": location,
+            "country": country
+        }
+    )
 
     if not location or not location.strip():
         raise BadRequestError("Параметарот 'location' е задолжителен")
@@ -70,6 +78,14 @@ def weather_by_location():
 def search_locations():
     query = request.args.get("q", type=str)
     country = request.args.get("country", default="MK", type=str)
+    current_app.logger.info(
+        "weather location search request received",
+        extra={
+            "event": "weather.search_started",
+            "query": query,
+            "country": country
+        }
+    )
 
     if not query or not query.strip():
         raise BadRequestError("Параметарот 'q' е задолжителен")

@@ -12,6 +12,7 @@ class Config:
 
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     WEATHER_API_KEY = os.getenv('WEATHER_API_KEY')
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'super-jwt-secret')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)

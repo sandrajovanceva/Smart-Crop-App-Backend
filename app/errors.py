@@ -1,4 +1,4 @@
-from flask import jsonify
+from flask import g, has_request_context, jsonify
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.exceptions import HTTPException
 
@@ -58,6 +58,9 @@ def error_response(message, status_code=400, code="error", details=None):
         "error": message,
         "code": code,
     }
+
+    if has_request_context() and getattr(g, "request_id", None):
+        payload["request_id"] = g.request_id
 
     if details is not None:
         payload["details"] = details

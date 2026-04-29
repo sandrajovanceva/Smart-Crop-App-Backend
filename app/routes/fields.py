@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.errors import BadRequestError
@@ -41,6 +41,11 @@ def get_fields():
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
+    current_app.logger.info(
+        "get fields request received",
+        extra={"event": "fields.list_started", "owner_user_id": user_id}
+    )
+
     fields = get_all_fields(user_id)
     return jsonify({"success": True, "fields": fields}), 200
 
@@ -70,6 +75,11 @@ def get_field(field_id):
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
+    current_app.logger.info(
+        "get field request received",
+        extra={"event": "fields.get_started", "field_id": field_id, "owner_user_id": user_id}
+    )
+
     field = get_field_by_id(field_id, user_id)
     return jsonify({"success": True, "field": field}), 200
 
@@ -130,6 +140,16 @@ def add_field():
     """
     user_id = get_jwt_identity()
     data = request.get_json(silent=True)
+    current_app.logger.info(
+        "create field request received",
+        extra={
+            "event": "fields.create_started",
+            "owner_user_id": user_id,
+            "body_fields": list(data.keys()) if isinstance(data, dict) else [],
+            "has_notes": bool(data.get("notes")) if isinstance(data, dict) else False,
+            "has_planting_date": bool(data.get("planting_date")) if isinstance(data, dict) else False
+        }
+    )
 
     if not data:
         raise BadRequestError("Invalid JSON body")
@@ -139,6 +159,11 @@ def add_field():
         raise BadRequestError(error)
 
     field = create_field(data, user_id)
+
+    current_app.logger.info(
+        "field created",
+        extra={"event": "fields.created", "field_id": field["id"], "owner_user_id": user_id}
+    )
 
     return jsonify({"success": True, "message": "Field created successfully", "field": field}), 201
 
@@ -170,6 +195,15 @@ def upload_fields_csv():
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
+    current_app.logger.info(
+        "csv field import request received",
+        extra={
+            "event": "fields.csv_import_request_started",
+            "owner_user_id": user_id,
+            "file_present": "file" in request.files,
+            "content_length": request.content_length
+        }
+    )
 
     if 'file' not in request.files:
         raise BadRequestError("CSV file is required")
@@ -181,7 +215,21 @@ def upload_fields_csv():
     if not csv_file.filename.lower().endswith('.csv'):
         raise BadRequestError("Only CSV files are allowed")
 
+    current_app.logger.info(
+        "csv field import started",
+        extra={"event": "fields.csv_import_started", "owner_user_id": user_id}
+    )
+
     fields = import_fields_from_csv(csv_file.stream, user_id)
+
+    current_app.logger.info(
+        "csv field import completed",
+        extra={
+            "event": "fields.csv_import_completed",
+            "owner_user_id": user_id,
+            "imported_count": len(fields)
+        }
+    )
 
     return jsonify({
         "success": True,
@@ -249,11 +297,25 @@ def edit_field(field_id):
     """
     user_id = get_jwt_identity()
     data = request.get_json(silent=True)
+    current_app.logger.info(
+        "update field request received",
+        extra={
+            "event": "fields.update_started",
+            "field_id": field_id,
+            "owner_user_id": user_id,
+            "body_fields": list(data.keys()) if isinstance(data, dict) else []
+        }
+    )
 
     if not data:
         raise BadRequestError("Invalid JSON body")
 
     field = update_field(field_id, data, user_id)
+
+    current_app.logger.info(
+        "field updated",
+        extra={"event": "fields.updated", "field_id": field["id"], "owner_user_id": user_id}
+    )
 
     return jsonify({"success": True, "message": "Field updated successfully", "field": field}), 200
 
@@ -283,6 +345,16 @@ def remove_field(field_id):
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
+    current_app.logger.info(
+        "delete field request received",
+        extra={"event": "fields.delete_started", "field_id": field_id, "owner_user_id": user_id}
+    )
+
     delete_field(field_id, user_id)
+
+    current_app.logger.info(
+        "field deleted",
+        extra={"event": "fields.deleted", "field_id": field_id, "owner_user_id": user_id}
+    )
 
     return jsonify({"success": True, "message": "Field deleted successfully"}), 200

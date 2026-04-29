@@ -2,6 +2,8 @@ import csv
 import io
 from datetime import datetime
 
+from flask import current_app
+
 from app import db
 from app.errors import BadRequestError, NotFoundError
 from app.models.Field import Field
@@ -14,11 +16,21 @@ CSV_COLUMNS = REQUIRED_CSV_COLUMNS + OPTIONAL_CSV_COLUMNS
 
 
 def get_all_fields(user_id):
+    current_app.logger.info(
+        "get all fields service started",
+        extra={"event": "field_service.get_all_started", "owner_user_id": user_id}
+    )
+
     fields = Field.query.filter_by(user_id=user_id).all()
     return [f.to_dict() for f in fields]
 
 
 def get_field_by_id(field_id, user_id):
+    current_app.logger.info(
+        "get field by id service started",
+        extra={"event": "field_service.get_by_id_started", "field_id": field_id, "owner_user_id": user_id}
+    )
+
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
         raise NotFoundError("Field not found")
@@ -26,6 +38,15 @@ def get_field_by_id(field_id, user_id):
 
 
 def create_field(data, user_id):
+    current_app.logger.info(
+        "create field service started",
+        extra={
+            "event": "field_service.create_started",
+            "owner_user_id": user_id,
+            "body_fields": list(data.keys()) if isinstance(data, dict) else []
+        }
+    )
+
     planting_date = _parse_planting_date(data.get("planting_date"))
 
     field = _create_field_model(data, user_id, planting_date)
@@ -36,6 +57,16 @@ def create_field(data, user_id):
 
 
 def update_field(field_id, data, user_id):
+    current_app.logger.info(
+        "update field service started",
+        extra={
+            "event": "field_service.update_started",
+            "field_id": field_id,
+            "owner_user_id": user_id,
+            "body_fields": list(data.keys()) if isinstance(data, dict) else []
+        }
+    )
+
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
         raise NotFoundError("Field not found")
@@ -64,6 +95,11 @@ def update_field(field_id, data, user_id):
 
 
 def delete_field(field_id, user_id):
+    current_app.logger.info(
+        "delete field service started",
+        extra={"event": "field_service.delete_started", "field_id": field_id, "owner_user_id": user_id}
+    )
+
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
     if not field:
         raise NotFoundError("Field not found")
@@ -73,6 +109,11 @@ def delete_field(field_id, user_id):
 
 
 def import_fields_from_csv(file_stream, user_id):
+    current_app.logger.info(
+        "csv field import service started",
+        extra={"event": "field_service.csv_import_started", "owner_user_id": user_id}
+    )
+
     try:
         text_stream = io.TextIOWrapper(file_stream, encoding="utf-8-sig", newline="")
         reader = csv.DictReader(text_stream)

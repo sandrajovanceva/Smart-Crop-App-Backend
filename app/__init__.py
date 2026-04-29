@@ -6,6 +6,7 @@ from flask_jwt_extended import JWTManager
 from flasgger import Swagger
 from app.config import Config
 from app.errors import error_response, register_error_handlers
+from app.logging_config import configure_logging, register_request_logging
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
@@ -15,6 +16,7 @@ jwt = JWTManager()
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+    configure_logging(app)
 
     app.config['SWAGGER'] = {
         'title': 'Smart Crops API',
@@ -37,6 +39,7 @@ def create_app():
     bcrypt.init_app(app)
     jwt.init_app(app)
     Swagger(app)
+    register_request_logging(app)
     register_error_handlers(app)
 
     from app.routes.advisor import advisor_bp

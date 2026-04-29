@@ -25,6 +25,19 @@ class AIService:
 
     def get_crop_advice(self, crop_name, weather_data, user_question=None):
         """Генерира AI совет за дадена култура врз основа на временски податоци добиени од OpenWeather API."""
+        location = weather_data.get("location", {}) if isinstance(weather_data, dict) else {}
+        current_app.logger.info(
+            "get crop advice service started",
+            extra={
+                "class_name": self.__class__.__name__,
+                "event": "ai_service.get_crop_advice_started",
+                "crop": crop_name,
+                "location": location.get("found_name"),
+                "country": location.get("country"),
+                "model": self.model,
+                "has_user_question": bool(user_question)
+            }
+        )
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(crop_name, weather_data, user_question)
@@ -41,23 +54,47 @@ class AIService:
             )
 
             raw = response.choices[0].message.content
-            current_app.logger.info(f"AI raw response: {raw[:500]}")
+            current_app.logger.debug(
+                f"AI raw response: {raw[:500]}",
+                extra={"class_name": self.__class__.__name__}
+            )
 
             advice = self._extract_json(raw)
+            tokens_used = response.usage.total_tokens if response.usage else None
+
+            current_app.logger.info(
+                "ai advice generated",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "ai.advice_generated",
+                    "model": self.model,
+                    "tokens_used": tokens_used,
+                    "has_user_question": bool(user_question)
+                }
+            )
 
             return {
                 "crop": crop_name,
                 "advice": advice,
                 "model_used": self.model,
-                "tokens_used": response.usage.total_tokens if response.usage else None,
+                "tokens_used": tokens_used,
             }
 
         except json.JSONDecodeError as e:
-            current_app.logger.error(f"AI response not valid JSON: {e}")
-            current_app.logger.error(f"Raw response was: {raw}")
+            current_app.logger.error(
+                f"AI response not valid JSON: {e}",
+                extra={"class_name": self.__class__.__name__}
+            )
+            current_app.logger.error(
+                f"Raw response was: {raw[:500]}",
+                extra={"class_name": self.__class__.__name__}
+            )
             raise ExternalServiceError("AI моделот не врати валиден JSON одговор") from e
         except Exception as e:
-            current_app.logger.error(f"AI service error: {e}")
+            current_app.logger.error(
+                f"AI service error: {e}",
+                extra={"class_name": self.__class__.__name__}
+            )
             raise ExternalServiceError("AI сервисот моментално не е достапен") from e
 
     @staticmethod

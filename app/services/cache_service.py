@@ -22,6 +22,17 @@ class CacheService:
     @classmethod
     def get_cached_advice(cls, crop, location, country="MK", question=None):
         """Враќа свеж кеширан совет ако постои, инаку None."""
+        current_app.logger.info(
+            "get cached advice service started",
+            extra={
+                "class_name": cls.__name__,
+                "event": "cache_service.get_cached_advice_started",
+                "crop": crop,
+                "location": location,
+                "country": country,
+                "has_question": bool(question)
+            }
+        )
 
         normalized_crop = cls._normalize_text(crop)
         normalized_location = cls._normalize_text(location)
@@ -47,19 +58,46 @@ class CacheService:
         if cache_entry:
             age_minutes = (datetime.utcnow() - cache_entry.created_at).total_seconds() / 60
             current_app.logger.info(
-                f"CACHE HIT: {normalized_crop}@{normalized_location} "
-                f"question={normalized_question} ({age_minutes:.0f} мин)"
+                "advice cache hit",
+                extra={
+                    "class_name": cls.__name__,
+                    "event": "cache_service.cache_hit",
+                    "crop": normalized_crop,
+                    "location": normalized_location,
+                    "country": normalized_country,
+                    "has_question": normalized_question is not None,
+                    "age_minutes": round(age_minutes)
+                }
             )
             return cache_entry.response_data
 
         current_app.logger.info(
-            f"CACHE MISS: {normalized_crop}@{normalized_location} question={normalized_question}"
+            "advice cache miss",
+            extra={
+                "class_name": cls.__name__,
+                "event": "cache_service.cache_miss",
+                "crop": normalized_crop,
+                "location": normalized_location,
+                "country": normalized_country,
+                "has_question": normalized_question is not None
+            }
         )
         return None
 
     @classmethod
     def save_advice(cls, crop, location, response_data, country="MK", question=None):
         """Зачувува нов совет во кеш."""
+        current_app.logger.info(
+            "save advice cache service started",
+            extra={
+                "class_name": cls.__name__,
+                "event": "cache_service.save_advice_started",
+                "crop": crop,
+                "location": location,
+                "country": country,
+                "has_question": bool(question)
+            }
+        )
 
         normalized_crop = cls._normalize_text(crop)
         normalized_location = cls._normalize_text(location)
@@ -78,18 +116,33 @@ class CacheService:
             db.session.commit()
 
             current_app.logger.info(
-                f"CACHE SAVED: {normalized_crop}@{normalized_location} question={normalized_question}"
+                "advice cache saved",
+                extra={
+                    "class_name": cls.__name__,
+                    "event": "cache_service.cache_saved",
+                    "crop": normalized_crop,
+                    "location": normalized_location,
+                    "country": normalized_country,
+                    "has_question": normalized_question is not None
+                }
             )
             return cache_entry
 
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Cache save error: {e}")
+            current_app.logger.error(
+                f"Cache save error: {e}",
+                extra={"class_name": cls.__name__, "event": "cache_service.cache_save_failed"}
+            )
             return None
 
     @classmethod
     def cleanup_old_entries(cls, days=7):
         """Брише записи од кеш постари од зададен број денови."""
+        current_app.logger.info(
+            "cleanup advice cache service started",
+            extra={"class_name": cls.__name__, "event": "cache_service.cleanup_started", "days": days}
+        )
 
         cutoff_time = datetime.utcnow() - timedelta(days=days)
         deleted = AdviceCache.query.filter(
@@ -97,5 +150,8 @@ class CacheService:
         ).delete()
         db.session.commit()
 
-        current_app.logger.info(f"Deleted {deleted} old cache entries")
+        current_app.logger.info(
+            f"Deleted {deleted} old cache entries",
+            extra={"class_name": cls.__name__, "event": "cache_service.cleanup_completed", "deleted": deleted}
+        )
         return deleted

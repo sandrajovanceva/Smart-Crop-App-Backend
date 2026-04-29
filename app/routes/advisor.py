@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import jwt_required
 from flasgger import swag_from
 
@@ -59,6 +59,17 @@ def smart_advice():
     country = data.get("country", "MK")
     question = data.get("question")
     force_refresh = data.get("force_refresh", False)
+    current_app.logger.info(
+        "smart advice request received",
+        extra={
+            "event": "advisor.smart_advice_started",
+            "crop": crop,
+            "location": location,
+            "country": country,
+            "force_refresh": force_refresh,
+            "has_question": bool(question)
+        }
+    )
 
     if not crop:
         raise BadRequestError("Полето 'crop' е задолжително")

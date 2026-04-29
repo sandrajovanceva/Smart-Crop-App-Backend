@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import (
     create_access_token,
     get_jwt,
@@ -50,6 +50,13 @@ def register():
         description: Емаилот веќе постои
     """
     data = request.get_json(silent=True)
+    current_app.logger.info(
+        "register request received",
+        extra={
+            "event": "auth.register_started",
+            "body_fields": list(data.keys()) if isinstance(data, dict) else []
+        }
+    )
 
     if not data:
         raise BadRequestError("Invalid JSON body")
@@ -69,6 +76,11 @@ def register():
 
     db.session.add(user)
     db.session.commit()
+
+    current_app.logger.info(
+        "user registered",
+        extra={"event": "auth.user_registered", "registered_user_id": user.id}
+    )
 
     return jsonify({
         "success": True,
@@ -109,6 +121,13 @@ def login():
         description: Погрешен емаил или лозинка
     """
     data = request.get_json(silent=True)
+    current_app.logger.info(
+        "login request received",
+        extra={
+            "event": "auth.login_started",
+            "body_fields": list(data.keys()) if isinstance(data, dict) else []
+        }
+    )
 
     if not data:
         raise BadRequestError("Invalid JSON body")
@@ -123,8 +142,14 @@ def login():
     user = User.query.filter_by(email=email).first()
 
     if not user or not bcrypt.check_password_hash(user.password_hash, password):
+        current_app.logger.warning("login failed", extra={"event": "auth.login_failed"})
         raise UnauthorizedError("Invalid email or password")
-    
+
+    current_app.logger.info(
+        "login successful",
+        extra={"event": "auth.login_success", "authenticated_user_id": user.id}
+    )
+
     access_token = create_access_token(
         identity=str(user.id),
         additional_claims={"email": user.email}
@@ -153,12 +178,23 @@ def logout():
       401:
         description: Неавторизиран пристап
     """
+    user_id = get_jwt_identity()
+    current_app.logger.info(
+        "logout request received",
+        extra={"event": "auth.logout_started", "authenticated_user_id": user_id}
+    )
+
     jwt_data = get_jwt()
     jti = jwt_data["jti"]
 
     blocked_token = TokenBlocklist(jti=jti)
     db.session.add(blocked_token)
     db.session.commit()
+
+    current_app.logger.info(
+        "logout successful",
+        extra={"event": "auth.logout_success", "authenticated_user_id": user_id}
+    )
 
     return jsonify({
         "success": True,
@@ -185,6 +221,11 @@ def me():
         description: Неавторизиран пристап
     """
     user_id = get_jwt_identity()
+    current_app.logger.info(
+        "me request received",
+        extra={"event": "auth.me_started", "authenticated_user_id": user_id}
+    )
+
     user = User.query.get(user_id)
 
     if not user:
