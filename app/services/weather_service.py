@@ -1,8 +1,9 @@
 import os
-import requests
 import time
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
+
+import requests
 from flask import current_app
 
 from app.errors import ConfigurationError, ExternalServiceError
@@ -20,13 +21,25 @@ class WeatherService:
         if not self.api_key:
             raise ConfigurationError("WEATHER_API_KEY не е поставен во .env фајлот")
 
-    def get_weather_by_location(self, location_name, country_code="MK"):
-        """Враќа време + прогноза + земјоделски сигнали за дадена локација.
+    def get_weather_by_coords(self, lat, lon, location_name=None):
+        current = self._fetch_current(lat, lon)
+        forecast = self._fetch_forecast(lat, lon)
 
-        :param location_name: име на град/село/регион (пр. 'Битола', 'Охрид')
-        :param country_code: ISO 3166 код на држава (default 'MK' за Македонија)
-        :return: dict со сите податоци, или None ако локацијата не е најдена
-        """
+        return {
+            "location": {
+                "searched_name": location_name,
+                "found_name": current.get("name") or location_name,
+                "country": (current.get("sys") or {}).get("country"),
+                "region": None,
+                "lat": lat,
+                "lon": lon,
+            },
+            "current": self._format_current(current),
+            "forecast_5_days": self._format_forecast(forecast),
+            "agricultural_alerts": self._build_alerts(current, forecast),
+        }
+
+    def get_weather_by_location(self, location_name, country_code="MK"):
         current_app.logger.info(
             "get weather by location service started",
             extra={
@@ -62,9 +75,6 @@ class WeatherService:
         }
 
     def search_locations(self, query, country_code="MK", limit=5):
-        """Опциона помошна метода - враќа листа на можни локации.
-        Корисна ако корисникот напише нешто двосмислено (пр. 'Ново Село').
-        """
         current_app.logger.info(
             "search weather locations service started",
             extra={
@@ -108,8 +118,6 @@ class WeatherService:
             raise ExternalServiceError("Не може да се пребараат временски локации") from e
 
     def _geocode(self, location_name, country_code):
-        """Конвертира име на место во координати преку Geocoding API."""
-
         query = f"{location_name},{country_code}" if country_code else location_name
         params = {"q": query, "limit": 1, "appid": self.api_key}
 
@@ -190,15 +198,15 @@ class WeatherService:
             "main": data["weather"][0]["main"],
             "icon": data["weather"][0]["icon"],
             "wind_speed": data["wind"]["speed"],
+            "wind_speed_kmh": round(data["wind"]["speed"] * 3.6, 1),
             "clouds_percent": data.get("clouds", {}).get("all", 0),
             "rain_1h_mm": data.get("rain", {}).get("1h", 0),
             "timestamp": datetime.fromtimestamp(data["dt"]).isoformat(),
+            "visibility": round(data.get("visibility", 0) / 1000, 1) if data.get("visibility") is not None else None,
         }
 
     @staticmethod
     def _format_forecast(data):
-        """Групира 3-часовни записи по ден со агрегирани вредности."""
-
         daily = defaultdict(list)
         for item in data["list"]:
             date = datetime.fromtimestamp(item["dt"]).strftime("%Y-%m-%d")
@@ -228,8 +236,6 @@ class WeatherService:
 
     @staticmethod
     def _build_alerts(current_data, forecast_data):
-        """Генерира корисни сигнали за земјоделство."""
-
         alerts = []
 
         current_temp = current_data["main"]["temp"]
