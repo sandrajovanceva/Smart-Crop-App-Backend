@@ -9,9 +9,17 @@ from app.errors import BadRequestError, NotFoundError
 from app.models.Field import Field
 from app.utils.validators import validate_field_input
 
-
 REQUIRED_CSV_COLUMNS = ["name", "size", "location", "crop_type"]
-OPTIONAL_CSV_COLUMNS = ["soil_type", "irrigation_type", "notes", "planting_date"]
+OPTIONAL_CSV_COLUMNS = [
+    "soil_type",
+    "irrigation_type",
+    "notes",
+    "planting_date",
+    "size_unit",
+    "coordinates",
+    "latitude",
+    "longitude",
+]
 CSV_COLUMNS = REQUIRED_CSV_COLUMNS + OPTIONAL_CSV_COLUMNS
 
 
@@ -47,12 +55,20 @@ def create_field(data, user_id):
         }
     )
 
+    if not isinstance(data, dict):
+        raise BadRequestError("Invalid request body")
+
+    valid, error = validate_field_input(data)
+    if not valid:
+        raise BadRequestError(error)
+
     planting_date = _parse_planting_date(data.get("planting_date"))
 
     field = _create_field_model(data, user_id, planting_date)
 
     db.session.add(field)
     db.session.commit()
+
     return field.to_dict()
 
 
@@ -67,30 +83,116 @@ def update_field(field_id, data, user_id):
         }
     )
 
+    if not isinstance(data, dict):
+        raise BadRequestError("Invalid request body")
+
     field = Field.query.filter_by(id=field_id, user_id=user_id).first()
+
     if not field:
         raise NotFoundError("Field not found")
 
-    if "name" in data:
-        field.name = data["name"].strip()
-    if "size" in data:
-        if not isinstance(data["size"], (int, float)) or data["size"] <= 0:
+    field_aliases = {
+        "crop": "crop_type",
+        "soilType": "soil_type",
+        "irrigation": "irrigation_type",
+        "plantingDate": "planting_date",
+        "unit": "size_unit",
+    }
+
+    normalized_data = {}
+
+    for key, value in data.items():
+        normalized_key = field_aliases.get(key, key)
+
+        if normalized_key not in normalized_data:
+            normalized_data[normalized_key] = value
+
+    if "name" in normalized_data:
+        name = normalized_data["name"].strip()
+
+        if not name:
+            raise BadRequestError("Field name cannot be empty")
+
+        field.name = name
+
+    if "size" in normalized_data:
+        try:
+            size = float(normalized_data["size"])
+        except (TypeError, ValueError):
             raise BadRequestError("Size must be a positive number")
-        field.size = data["size"]
-    if "location" in data:
-        field.location = data["location"].strip()
-    if "crop_type" in data:
-        field.crop_type = data["crop_type"].strip()
-    if "soil_type" in data:
-        field.soil_type = data["soil_type"]
-    if "irrigation_type" in data:
-        field.irrigation_type = data["irrigation_type"]
-    if "notes" in data:
-        field.notes = data["notes"]
-    if "planting_date" in data:
-        field.planting_date = _parse_planting_date(data["planting_date"])
+
+        if size <= 0:
+            raise BadRequestError("Size must be a positive number")
+
+        field.size = size
+
+    if "location" in normalized_data:
+        location = normalized_data["location"].strip()
+
+        if not location:
+            raise BadRequestError("Location cannot be empty")
+
+        field.location = location
+
+    if "country" in normalized_data:
+        field.country = normalized_data["country"]
+
+    if "crop_type" in normalized_data:
+        crop_type = normalized_data["crop_type"].strip()
+
+        if not crop_type:
+            raise BadRequestError("Crop type cannot be empty")
+
+        field.crop_type = crop_type
+
+    if "soil_type" in normalized_data:
+        field.soil_type = normalized_data["soil_type"]
+
+    if "irrigation_type" in normalized_data:
+        field.irrigation_type = normalized_data["irrigation_type"]
+
+    if "notes" in normalized_data:
+        field.notes = normalized_data["notes"]
+
+    if "planting_date" in normalized_data:
+        field.planting_date = _parse_planting_date(
+            normalized_data["planting_date"]
+        )
+
+    if "size_unit" in normalized_data:
+        size_unit = normalized_data["size_unit"]
+
+        if size_unit not in ("acres", "hectares"):
+            raise BadRequestError("Unit must be either acres or hectares")
+
+        field.size_unit = size_unit
+
+    if "coordinates" in normalized_data:
+        coordinates = normalized_data["coordinates"]
+
+        # field.coordinates = coordinates
+
+        latitude, longitude = _parse_coordinates(coordinates)
+        field.latitude = latitude
+        field.longitude = longitude
+
+    if "latitude" in normalized_data:
+        field.latitude = normalized_data["latitude"]
+
+    if "longitude" in normalized_data:
+        field.longitude = normalized_data["longitude"]
 
     db.session.commit()
+
+    current_app.logger.info(
+        "update field service completed",
+        extra={
+            "event": "field_service.update_completed",
+            "field_id": field_id,
+            "owner_user_id": user_id
+        }
+    )
+
     return field.to_dict()
 
 
@@ -179,10 +281,21 @@ def _parse_planting_date(value):
 
 
 def _create_field_model(data, user_id, planting_date):
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    coordinates = data.get("coordinates")
+
+    if coordinates and (latitude is None or longitude is None):
+        latitude, longitude = _parse_coordinates(coordinates)
+
     return Field(
         name=data["name"].strip(),
         size=data["size"],
+        size_unit=data.get("size_unit") or data.get("unit") or "acres",
         location=data["location"].strip(),
+        country=data.get("country"),
+        latitude=latitude,
+        longitude=longitude,
         crop_type=data["crop_type"].strip(),
         soil_type=data.get("soil_type"),
         irrigation_type=data.get("irrigation_type"),
@@ -253,3 +366,14 @@ def _validate_csv_field_data(data, row_number):
         errors.append(f"Row {row_number}: {error}")
 
     return errors
+
+
+def _parse_coordinates(value):
+    if not value:
+        return None, None
+
+    try:
+        lat_raw, lon_raw = value.split(",", 1)
+        return float(lat_raw.strip()), float(lon_raw.strip())
+    except (ValueError, AttributeError):
+        raise BadRequestError("Invalid coordinates format. Use 'lat, lon'")

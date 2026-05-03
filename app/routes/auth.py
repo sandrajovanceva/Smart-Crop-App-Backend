@@ -14,6 +14,7 @@ from app.utils.validators import validate_register_input, validate_login_input
 
 auth_bp = Blueprint('auth', __name__)
 
+
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """
@@ -30,7 +31,6 @@ def register():
           required:
             - email
             - password
-            - fullname
           properties:
             email:
               type: string
@@ -40,6 +40,7 @@ def register():
               example: pass1234!
             fullname:
               type: string
+              description: Може да се испрати и како `fullName` (camelCase)
               example: Test User
     responses:
       201:
@@ -64,15 +65,16 @@ def register():
     valid, error = validate_register_input(data)
     if not valid:
         raise BadRequestError(error)
-    
+
     email = data["email"].strip()
+    full_name = (data.get("fullname") or data.get("fullName") or "").strip()
 
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
         raise ConflictError("Email already exists")
 
     password_hash = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
-    user = User(email=email, password_hash=password_hash, full_name=data["fullname"])
+    user = User(email=email, password_hash=password_hash, full_name=full_name)
 
     db.session.add(user)
     db.session.commit()
@@ -82,10 +84,17 @@ def register():
         extra={"event": "auth.user_registered", "registered_user_id": user.id}
     )
 
+    access_token = create_access_token(
+        identity=str(user.id),
+        additional_claims={"email": user.email}
+    )
+
     return jsonify({
         "success": True,
         "message": "User registered successfully",
-        "user": user.to_dict()
+        "user": user.to_dict(),
+        "access_token": access_token,
+        "token": access_token
     }), 201
 
 
@@ -155,10 +164,13 @@ def login():
         additional_claims={"email": user.email}
     )
 
+    # Враќаме и user објектот за да frontend не мора веднаш да повикува /me.
     return jsonify({
         "success": True,
         "message": "Login successful",
-        "access_token": access_token
+        "access_token": access_token,
+        "token": access_token,
+        "user": user.to_dict()
     }), 200
 
 

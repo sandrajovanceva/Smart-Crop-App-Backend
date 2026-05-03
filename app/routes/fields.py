@@ -123,13 +123,23 @@ def add_field():
               example: Глинеста
             irrigation_type:
               type: string
-              example: Капково
+              example: Капка по капка
             notes:
               type: string
               example: Белешки за нивата
             planting_date:
               type: string
               example: "2026-04-01"
+            latitude:
+              type: number
+              format: float
+              example: 41.9981
+              description: "Географска ширина (-90 до 90)."
+            longitude:
+              type: number
+              format: float
+              example: 21.4254
+              description: "Географска должина (-180 до 180)."
     responses:
       201:
         description: Нивата е успешно креирана
