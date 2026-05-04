@@ -1,142 +1,144 @@
-import os
 import json
+import os
 import re
-from openai import OpenAI
+
 from flask import current_app
+from openai import OpenAI
 
 from app.errors import ConfigurationError, ExternalServiceError
 
 
 class AIService:
-    """AI сервис за земјоделски совети - користи Google Gemini API."""
+    """AI сервис со Fallback архитектура: Примарно Gemini, Секундарно Groq."""
 
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ConfigurationError("GEMINI_API_KEY не е поставен во .env фајлот")
+        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        if not self.gemini_key:
+            raise ConfigurationError("GEMINI_API_KEY не е поставен")
 
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=self.BASE_URL,
-        )
-        self.model = "gemini-2.5-flash"
+        self.gemini_client = OpenAI(api_key=self.gemini_key, base_url=self.GEMINI_BASE_URL)
+        self.gemini_model = "gemini-2.0-flash"
+
+        self.groq_key = os.getenv("GROQ_API_KEY")
+        self.groq_client = None
+        if self.groq_key:
+            self.groq_client = OpenAI(api_key=self.groq_key, base_url=self.GROQ_BASE_URL)
+
+        self.groq_model = "llama-3.3-70b-versatile"
 
     def get_crop_advice(self, crop_name, weather_data, user_question=None):
-        """Генерира AI совет за дадена култура врз основа на временски податоци добиени од OpenWeather API."""
-        location = weather_data.get("location", {}) if isinstance(weather_data, dict) else {}
-        current_app.logger.info(
-            "get crop advice service started",
-            extra={
-                "class_name": self.__class__.__name__,
-                "event": "ai_service.get_crop_advice_started",
-                "crop": crop_name,
-                "location": location.get("found_name"),
-                "country": location.get("country"),
-                "model": self.model,
-                "has_user_question": bool(user_question)
-            }
-        )
-
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(crop_name, weather_data, user_question)
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.4,
-                max_tokens=4000,
-            )
+            return self._call_gemini(crop_name, system_prompt, user_prompt, user_question)
 
-            raw = response.choices[0].message.content
-            current_app.logger.debug(
-                f"AI raw response: {raw[:500]}",
-                extra={"class_name": self.__class__.__name__}
-            )
-
-            advice = self._extract_json(raw)
-            tokens_used = response.usage.total_tokens if response.usage else None
-
-            current_app.logger.info(
-                "ai advice generated",
-                extra={
-                    "class_name": self.__class__.__name__,
-                    "event": "ai.advice_generated",
-                    "model": self.model,
-                    "tokens_used": tokens_used,
-                    "has_user_question": bool(user_question)
-                }
-            )
-
-            return {
-                "crop": crop_name,
-                "advice": advice,
-                "model_used": self.model,
-                "tokens_used": tokens_used,
-            }
-
-        except json.JSONDecodeError as e:
-            current_app.logger.error(
-                f"AI response not valid JSON: {e}",
-                extra={"class_name": self.__class__.__name__}
-            )
-            current_app.logger.error(
-                f"Raw response was: {raw[:500]}",
-                extra={"class_name": self.__class__.__name__}
-            )
-            raise ExternalServiceError("AI моделот не врати валиден JSON одговор") from e
         except Exception as e:
-            current_app.logger.error(
-                f"AI service error: {e}",
-                extra={"class_name": self.__class__.__name__}
+            current_app.logger.warning(
+                f"Gemini дефект: {str(e)}. Префрлам на Groq Fallback...",
+                extra={"event": "ai_service.switching_to_groq"}
             )
-            raise ExternalServiceError("AI сервисот моментално не е достапен") from e
+
+            if self.groq_client:
+                try:
+                    return self._call_groq(crop_name, system_prompt, user_prompt, user_question)
+                except Exception as ge:
+                    current_app.logger.error(f"И Groq не успеа: {ge}")
+                    raise ExternalServiceError("Сите AI сервиси се недостапни.")
+            else:
+                raise ExternalServiceError("Gemini е блокиран, а Groq не е конфигуриран во .env")
+
+    def _call_gemini(self, crop_name, system_prompt, user_prompt, user_question):
+        response = self.gemini_client.chat.completions.create(
+            model=self.gemini_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content
+        if not raw or raw.strip() == "":
+            raise ValueError("Празен одговор од Gemini")
+
+        advice = self._extract_json(raw)
+        return self._format_final_response(crop_name, advice, self.gemini_model, response.usage.total_tokens,
+                                           user_question)
+
+    def _call_groq(self, crop_name, system_prompt, user_prompt, user_question):
+        response = self.groq_client.chat.completions.create(
+            model=self.groq_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            response_format={"type": "json_object"}
+        )
+
+        raw = response.choices[0].message.content
+        advice = self._extract_json(raw)
+        tokens = response.usage.total_tokens if response.usage else 0
+
+        return self._format_final_response(crop_name, advice, self.groq_model, tokens, user_question)
+
+    @staticmethod
+    def _format_final_response(crop, advice, model, tokens, has_q):
+        current_app.logger.info(f"Успешно генериран совет преку моделот: {model}")
+        return {
+            "crop": crop,
+            "advice": advice,
+            "model_used": model,
+            "tokens_used": tokens,
+            "has_user_question": bool(has_q)
+        }
 
     @staticmethod
     def _extract_json(text):
-        """Екстрактира JSON од одговор кој може да има markdown формат или extra текст."""
+        try:
+            text = text.strip()
+            markdown_match = re.search(r'```(?:json)?\s*({.*?})\s*```', text, re.DOTALL)
+            if markdown_match:
+                return json.loads(markdown_match.group(1))
 
-        text = text.strip()
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                return json.loads(text[start:end + 1])
 
-        markdown_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if markdown_match:
-            return json.loads(markdown_match.group(1))
-
-        start = text.find('{')
-        end = text.rfind('}')
-        if start != -1 and end != -1 and end > start:
-            return json.loads(text[start:end + 1])
-
-        return json.loads(text)
+            return json.loads(text)
+        except (json.JSONDecodeError, ValueError) as e:
+            current_app.logger.error(f"JSON Parsing Error: {str(e)} | Raw text: {text[:100]}")
+            return None
 
     @staticmethod
     def _build_system_prompt():
-        return """Ти си експерт за земјоделство и агрономија. Даваш конкретни, практични 
-                    совети на фармери врз основа на временските услови и културата.
-                    
-                    ПРАВИЛА:
-                    - Пиши САМО на македонски јазик
-                    - Биди конкретен - спомнувај реални бројки од временските податоци
-                    - Давај совети за СЛЕДНИТЕ 5 ДЕНА
-                    - Ако има ризик (мраз, обилен дожд, силен ветер) - истакни го приоритетно
-                    
-                    КРИТИЧНО ВАЖНО: Одговараш САМО со валиден JSON објект, без никаков дополнителен текст, 
-                    без markdown кодни блокови, без објаснувања пред или после JSON-от.
-                    
-                    СТРИКТЕН JSON ФОРМАТ:
+        return """You are an expert in agriculture and agronomy. You provide concrete, practical
+                    advice to farmers based on weather conditions and crop type.
+
+                    RULES:
+                    - Write ONLY in English
+                    - Be specific - reference real numbers from the weather data
+                    - Give advice for THE NEXT 5 DAYS
+                    - If there is a risk (frost, heavy rain, strong wind) - highlight it as a priority
+
+                    CRITICAL: Respond ONLY with a valid JSON object, no additional text,
+                    no markdown code blocks, no explanations before or after the JSON.
+
+                    STRICT JSON FORMAT:
                     {
-                      "summary": "краток преглед во 1-2 реченици",
-                      "immediate_actions": ["активност 1", "активност 2"],
-                      "warnings": ["предупредување 1"],
-                      "irrigation_advice": "совет за наводнување",
-                      "pest_disease_risk": "проценка на ризик од болести",
-                      "recommended_activities": ["препорачано 1", "препорачано 2"],
-                      "activities_to_avoid": ["избегнувај 1", "избегнувај 2"]
+                      "summary": "short overview in 1-2 sentences",
+                      "immediate_actions": ["action 1", "action 2"],
+                      "warnings": ["warning 1"],
+                      "irrigation_advice": "irrigation recommendation",
+                      "pest_disease_risk": "disease and pest risk assessment",
+                      "recommended_activities": ["recommendation 1", "recommendation 2"],
+                      "activities_to_avoid": ["avoid 1", "avoid 2"]
                     }"""
 
     @staticmethod
@@ -146,34 +148,34 @@ class AIService:
         alerts = weather_data.get("agricultural_alerts", [])
         location = weather_data.get("location", {})
 
-        prompt = f"""КУЛТУРА: {crop_name}
-                    ЛОКАЦИЈА: {location.get('found_name', 'непознато')}
-                    
-                    ТЕКОВНИ УСЛОВИ:
-                    - Температура: {current.get('temperature')}°C (се чувствува како {current.get('feels_like')}°C)
-                    - Влажност: {current.get('humidity')}%
-                    - Ветер: {current.get('wind_speed')} m/s
-                    - Опис: {current.get('description')}
-                    - Дожд последен час: {current.get('rain_1h_mm')} mm
-                    
-                    ПРОГНОЗА ЗА СЛЕДНИТЕ 5 ДЕНА:
+        prompt = f"""CROP: {crop_name}
+                    LOCATION: {location.get('found_name', 'unknown')}
+
+                    CURRENT CONDITIONS:
+                    - Temperature: {current.get('temperature')}°C (feels like {current.get('feels_like')}°C)
+                    - Humidity: {current.get('humidity')}%
+                    - Wind: {current.get('wind_speed')} m/s
+                    - Description: {current.get('description')}
+                    - Rain last hour: {current.get('rain_1h_mm')} mm
+
+                    5-DAY FORECAST:
                     """
         for day in forecast:
             prompt += (
-                f"- {day['date']}: {day['temp_min']}°C до {day['temp_max']}°C, "
-                f"веројатност за дожд {day['rain_probability']}%, "
-                f"врнежи {day['total_rain_mm']}mm, "
-                f"ветер до {day['wind_max']}m/s, "
+                f"- {day['date']}: {day['temp_min']}°C to {day['temp_max']}°C, "
+                f"rain probability {day['rain_probability']}%, "
+                f"rainfall {day['total_rain_mm']}mm, "
+                f"wind up to {day['wind_max']}m/s, "
                 f"{day['description']}\n"
             )
 
         if alerts:
-            prompt += "\nАВТОМАТСКИ СИГНАЛИ:\n"
+            prompt += "\nAUTOMATIC ALERTS:\n"
             for alert in alerts:
                 prompt += f"- [{alert['severity'].upper()}] {alert['message']}\n"
 
         if user_question:
-            prompt += f"\nКОНКРЕТНО ПРАШАЊЕ ОД КОРИСНИКОТ: {user_question}\n"
+            prompt += f"\nUSER QUESTION: {user_question}\n"
 
-        prompt += "\nВрати ОДГОВОР САМО во JSON формат според дефинираната структура. Без markdown, без extra текст."
+        prompt += "\nReturn the response ONLY in JSON format as defined. No markdown, no extra text."
         return prompt

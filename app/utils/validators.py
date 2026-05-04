@@ -68,7 +68,7 @@ def validate_field_input(data):
     if "size_unit" not in data and "unit" in data:
         data["size_unit"] = data["unit"]
 
-    required_fields = ["name", "size", "location", "crop_type"]
+    required_fields = ["name", "size", "crop_type"]
     missing = [field for field in required_fields if field not in data or data.get(field) in (None, "")]
 
     if missing:
@@ -83,7 +83,14 @@ def validate_field_input(data):
     if not isinstance(data["name"], str) or len(data["name"].strip()) < 2:
         return False, "Field name must be at least 2 characters"
 
-    if not isinstance(data["location"], str) or len(data["location"].strip()) < 2:
+    location_value = data.get("location")
+    has_location = isinstance(location_value, str) and len(location_value.strip()) >= 2
+    has_coordinates = _has_coordinate_pair(data)
+
+    if not has_location and not has_coordinates:
+        return False, "Provide either location or coordinates (latitude/longitude)"
+
+    if isinstance(location_value, str) and location_value.strip() and len(location_value.strip()) < 2:
         return False, "Location must be at least 2 characters"
 
     if not isinstance(data["crop_type"], str) or len(data["crop_type"].strip()) < 2:
@@ -94,3 +101,28 @@ def validate_field_input(data):
         return False, "Unit must be either acres or hectares"
 
     return True, None
+
+
+def _has_coordinate_pair(data):
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+
+    if latitude not in (None, "") and longitude not in (None, ""):
+        return True
+
+    coordinates = data.get("coordinates")
+    if coordinates in (None, ""):
+        return False
+
+    if isinstance(coordinates, str):
+        return "," in coordinates
+
+    if isinstance(coordinates, dict):
+        lat_value = coordinates.get("lat", coordinates.get("latitude"))
+        lon_value = coordinates.get("lng", coordinates.get("longitude"))
+        return lat_value not in (None, "") and lon_value not in (None, "")
+
+    if isinstance(coordinates, (list, tuple)) and len(coordinates) == 2:
+        return coordinates[0] not in (None, "") and coordinates[1] not in (None, "")
+
+    return False

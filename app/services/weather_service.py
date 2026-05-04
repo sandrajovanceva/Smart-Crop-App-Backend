@@ -39,7 +39,7 @@ class WeatherService:
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
 
-    def get_weather_by_location(self, location_name, country_code="MK"):
+    def get_weather_by_location(self, location_name, country_code=None):
         current_app.logger.info(
             "get weather by location service started",
             extra={
@@ -74,7 +74,7 @@ class WeatherService:
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
 
-    def search_locations(self, query, country_code="MK", limit=5):
+    def search_locations(self, query, country_code=None, limit=5):
         current_app.logger.info(
             "search weather locations service started",
             extra={
@@ -86,11 +86,9 @@ class WeatherService:
             }
         )
 
-        params = {
-            "q": f"{query},{country_code}" if country_code else query,
-            "limit": limit,
-            "appid": self.api_key,
-        }
+        params = {"q": query, "limit": limit, "appid": self.api_key}
+        if country_code and country_code.strip():
+            params["q"] = f"{query},{country_code.strip().upper()}"
         try:
             r = requests.get(f"{self.GEO_URL}/direct", params=params, timeout=10)
             r.raise_for_status()
@@ -118,33 +116,67 @@ class WeatherService:
             raise ExternalServiceError("Не може да се пребараат временски локации") from e
 
     def _geocode(self, location_name, country_code):
-        query = f"{location_name},{country_code}" if country_code else location_name
-        params = {"q": query, "limit": 1, "appid": self.api_key}
+        queries = []
+        if location_name and isinstance(location_name, str):
+            raw_name = location_name.strip()
+            if raw_name:
+                queries.append(raw_name)
 
+                lowered = raw_name.lower()
+                if lowered.startswith("city of "):
+                    simplified = raw_name[8:].strip()
+                    if simplified:
+                        queries.append(simplified)
+                elif lowered.startswith("municipality of "):
+                    simplified = raw_name[16:].strip()
+                    if simplified:
+                        queries.append(simplified)
+
+        if not queries:
+            return None
+
+        country = country_code.strip().upper() if isinstance(country_code, str) and country_code.strip() else None
+
+        query_candidates = []
+        for query in queries:
+            if country:
+                query_candidates.append(f"{query},{country}")
+            query_candidates.append(query)
+
+        for query in query_candidates:
+            result = self._geocode_direct(query)
+            if result:
+                return result
+
+        return None
+
+    def _geocode_direct(self, query):
+        params = {"q": query, "limit": 1, "appid": self.api_key}
         try:
             r = requests.get(f"{self.GEO_URL}/direct", params=params, timeout=10)
             r.raise_for_status()
             data = r.json()
-            if not data:
-                return None
-            return {
-                "lat": data[0]["lat"],
-                "lon": data[0]["lon"],
-                "name": data[0]["name"],
-                "country": data[0].get("country"),
-                "state": data[0].get("state"),
-            }
         except requests.RequestException as e:
             current_app.logger.error(
                 f"Geocoding error: {e}",
                 extra={
                     "class_name": self.__class__.__name__,
                     "event": "weather_service.geocoding_failed",
-                    "location": location_name,
-                    "country": country_code
+                    "query": query
                 }
             )
             raise ExternalServiceError("Не може да се добијат координати од временскиот сервис") from e
+
+        if not data:
+            return None
+
+        return {
+            "lat": data[0]["lat"],
+            "lon": data[0]["lon"],
+            "name": data[0]["name"],
+            "country": data[0].get("country"),
+            "state": data[0].get("state"),
+        }
 
     def _fetch_current(self, lat, lon):
         return self._request("weather", {"lat": lat, "lon": lon})
@@ -155,7 +187,7 @@ class WeatherService:
     def _request(self, endpoint, params):
         params["appid"] = self.api_key
         params["units"] = "metric"
-        params["lang"] = "mk"
+        params["lang"] = "en"
         started_at = time.perf_counter()
         try:
             r = requests.get(f"{self.BASE_URL}/{endpoint}", params=params, timeout=10)

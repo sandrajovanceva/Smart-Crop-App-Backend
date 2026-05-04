@@ -17,7 +17,7 @@ class Field(db.Model):
     planting_date = db.Column(db.Date)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    size_unit = db.Column(db.String(20), default="acres")
+    size_unit = db.Column(db.String(20), default="hectares")
     latitude = db.Column(db.Float)
     longitude = db.Column(db.Float)
 
@@ -114,7 +114,7 @@ class Field(db.Model):
             "crop": self.crop_type,
             "location": self.location,
             "country": self.country,
-            "size": f"{self.size:g} {self.size_unit or 'acres'}",
+            "size": f"{self.size:g} {self.size_unit or 'hectares'}",
 
             "status": status,
             "lastAnalysis": self._last_analysis_label(),
@@ -124,7 +124,7 @@ class Field(db.Model):
             "soilType": self.soil_type,
 
             "sizeValue": self.size,
-            "unit": self.size_unit or "acres",
+            "unit": self.size_unit or "hectares",
             "coordinates": coordinates,
             "latitude": self.latitude,
             "longitude": self.longitude,

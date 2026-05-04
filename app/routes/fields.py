@@ -8,7 +8,8 @@ from app.services.field_service import (
     create_field,
     update_field,
     delete_field,
-    import_fields_from_csv
+    import_fields_from_csv,
+    resolve_location_from_coordinates
 )
 from app.utils.validators import validate_field_input
 
@@ -84,6 +85,24 @@ def get_field(field_id):
     return jsonify({"success": True, "field": field}), 200
 
 
+@fields_bp.route('/reverse-geocode', methods=['GET'])
+@jwt_required()
+def reverse_geocode_field_location():
+    lat = request.args.get("lat")
+    lng = request.args.get("lng")
+    lon = request.args.get("lon")
+    longitude = lng if lng is not None else lon
+
+    if lat is None or longitude is None:
+        raise BadRequestError("lat and lng query params are required")
+
+    location = resolve_location_from_coordinates(lat, longitude)
+    return jsonify({
+        "success": True,
+        "location": location
+    }), 200
+
+
 @fields_bp.route('/', methods=['POST'])
 @jwt_required()
 def add_field():
@@ -103,7 +122,6 @@ def add_field():
           required:
             - name
             - size
-            - location
             - crop_type
           properties:
             name:
@@ -115,6 +133,7 @@ def add_field():
             location:
               type: string
               example: Скопје
+              description: "Опционално ако се испратени latitude/longitude или coordinates."
             crop_type:
               type: string
               example: Пченица
