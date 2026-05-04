@@ -141,7 +141,7 @@ def weather_by_field(field_id):
     if field.latitude is not None and field.longitude is not None:
         data = service.get_weather_by_coords(field.latitude, field.longitude, location_name=field.location)
     else:
-        data = service.get_weather_by_location(field.location)
+        data = service.get_weather_by_location(field.location, country_code=field.country or "MK")
         if not data:
             raise NotFoundError(f"Не може да се добие време за '{field.location}'")
 

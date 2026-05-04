@@ -1,5 +1,6 @@
 import csv
 import io
+import textwrap
 from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, request, jsonify, Response
@@ -167,6 +168,18 @@ def _compute_stats(user_id, reports):
             }
         ]
     }
+
+
+def _resolve_report_summary(report):
+    if report.summary and report.summary.strip():
+        return report.summary.strip()
+
+    payload = report.payload if isinstance(report.payload, dict) else {}
+    payload_summary = payload.get("summary")
+    if isinstance(payload_summary, str) and payload_summary.strip():
+        return payload_summary.strip()
+
+    return "No summary"
 
 
 @reports_bp.route('/<int:report_id>', methods=['GET'])
@@ -461,7 +474,13 @@ def download_report_pdf(report_id):
     pdf.drawString(50, 775, f"Type: {report.report_type}")
     pdf.drawString(50, 750, f"Field: {report.field.name if report.field else '—'}")
     pdf.drawString(50, 725, f"Status: {report.status}")
-    pdf.drawString(50, 700, f"Summary: {report.summary or 'No summary'}")
+
+    summary_text = _resolve_report_summary(report)
+    summary_lines = textwrap.wrap(f"Summary: {summary_text}", width=90)
+    y = 700
+    for line in summary_lines:
+        pdf.drawString(50, y, line)
+        y -= 15
 
     pdf.showPage()
     pdf.save()

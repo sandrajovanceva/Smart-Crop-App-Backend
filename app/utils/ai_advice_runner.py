@@ -1,4 +1,4 @@
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ExternalServiceError
 from app.services.ai_service import AIService
 from app.services.cache_service import CacheService
 from app.services.weather_service import WeatherService
@@ -31,16 +31,25 @@ def get_cached_or_generate_advice(
 
     ai_service = AIService()
 
-    advice = ai_service.get_crop_advice(
-        crop_name=crop,
-        weather_data=weather_data,
-        user_question=prompt
-    )
+    try:
+        advice = ai_service.get_crop_advice(
+            crop_name=crop,
+            weather_data=weather_data,
+            user_question=prompt
+        )
+    except ExternalServiceError:
+        return {
+            "weather": weather_data,
+            "advice": {},
+            "from_cache": False,
+            "ai_unavailable": True,
+        }
 
     response_data = {
         "weather": weather_data,
         "advice": advice,
         "from_cache": False,
+        "ai_unavailable": False,
     }
 
     CacheService.save_advice(

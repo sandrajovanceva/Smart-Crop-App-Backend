@@ -11,7 +11,8 @@ def resolve_crop_location(data, user_id):
         if not field:
             raise NotFoundError("Field not found")
 
-        return field.crop_type, field.location, data.get("country", "MK")
+        country = data.get("country") or field.country
+        return field.crop_type, field.location, country
 
     crop = data.get("crop")
     location = data.get("location")

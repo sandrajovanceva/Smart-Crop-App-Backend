@@ -19,8 +19,16 @@ class CacheService:
 
         return " ".join(value.strip().lower().split())
 
+    @staticmethod
+    def _normalize_country(country):
+        if not country or not isinstance(country, str):
+            return "GLOBAL"
+
+        normalized = country.strip().upper()
+        return normalized or "GLOBAL"
+
     @classmethod
-    def get_cached_advice(cls, crop, location, country="MK", question=None):
+    def get_cached_advice(cls, crop, location, country=None, question=None):
         """Враќа свеж кеширан совет ако постои, инаку None."""
         current_app.logger.info(
             "get cached advice service started",
@@ -36,7 +44,7 @@ class CacheService:
 
         normalized_crop = cls._normalize_text(crop)
         normalized_location = cls._normalize_text(location)
-        normalized_country = country.strip().upper()
+        normalized_country = cls._normalize_country(country)
         normalized_question = cls._normalize_text(question)
 
         cutoff_time = datetime.utcnow() - timedelta(hours=cls.CACHE_DURATION_HOURS)
@@ -85,7 +93,7 @@ class CacheService:
         return None
 
     @classmethod
-    def save_advice(cls, crop, location, response_data, country="MK", question=None):
+    def save_advice(cls, crop, location, response_data, country=None, question=None):
         """Зачувува нов совет во кеш."""
         current_app.logger.info(
             "save advice cache service started",
@@ -101,7 +109,7 @@ class CacheService:
 
         normalized_crop = cls._normalize_text(crop)
         normalized_location = cls._normalize_text(location)
-        normalized_country = country.strip().upper()
+        normalized_country = cls._normalize_country(country)
         normalized_question = cls._normalize_text(question)
 
         try:

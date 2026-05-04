@@ -2,6 +2,7 @@ import csv
 import io
 from datetime import datetime
 
+import requests
 from flask import current_app
 
 from app import db
@@ -43,6 +44,61 @@ def get_field_by_id(field_id, user_id):
     if not field:
         raise NotFoundError("Field not found")
     return field.to_dict()
+
+
+def reverse_geocode(lat, lon):
+    if lat is None or lon is None:
+        return None
+
+    try:
+        app_name = current_app.config.get("APP_NAME", "SmartCrop")
+        contact_email = current_app.config.get("CONTACT_EMAIL", "support@smartcrop.local")
+        headers = {
+            "User-Agent": f"{app_name}/1.0 ({contact_email})"
+        }
+        params = {
+            "lat": lat,
+            "lon": lon,
+            "format": "json",
+            "addressdetails": 1,
+            "zoom": 10,
+            "accept-language": "en",
+        }
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        address = data.get("address") or {}
+
+        location_name = _extract_location_name(address)
+        if location_name:
+            return location_name
+
+        display_name = data.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            return display_name.strip()
+
+        return None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def resolve_location_from_coordinates(latitude, longitude):
+    latitude = _coerce_coordinate(latitude, "Latitude", -90, 90)
+    longitude = _coerce_coordinate(longitude, "Longitude", -180, 180)
+
+    if latitude is None or longitude is None:
+        raise BadRequestError("Latitude and longitude are required")
+
+    reverse_geocoded = reverse_geocode(latitude, longitude)
+    if reverse_geocoded and reverse_geocoded.strip():
+        return reverse_geocoded.strip()
+
+    raise BadRequestError("Could not resolve location name from coordinates")
 
 
 def create_field(data, user_id):
@@ -126,13 +182,44 @@ def update_field(field_id, data, user_id):
 
         field.size = size
 
+    coordinates_changed = False
+
+    if "coordinates" in normalized_data:
+        latitude, longitude = _parse_coordinates(normalized_data["coordinates"])
+        field.latitude = latitude
+        field.longitude = longitude
+        coordinates_changed = True
+
+    if "latitude" in normalized_data:
+        field.latitude = _coerce_coordinate(
+            normalized_data["latitude"],
+            "Latitude",
+            -90,
+            90
+        )
+        coordinates_changed = True
+
+    if "longitude" in normalized_data:
+        field.longitude = _coerce_coordinate(
+            normalized_data["longitude"],
+            "Longitude",
+            -180,
+            180
+        )
+        coordinates_changed = True
+
     if "location" in normalized_data:
-        location = normalized_data["location"].strip()
-
-        if not location:
-            raise BadRequestError("Location cannot be empty")
-
-        field.location = location
+        field.location = _resolve_location(
+            normalized_data["location"],
+            field.latitude,
+            field.longitude
+        )
+    elif coordinates_changed:
+        field.location = _resolve_location(
+            None,
+            field.latitude,
+            field.longitude
+        )
 
     if "country" in normalized_data:
         field.country = normalized_data["country"]
@@ -166,21 +253,6 @@ def update_field(field_id, data, user_id):
             raise BadRequestError("Unit must be either acres or hectares")
 
         field.size_unit = size_unit
-
-    if "coordinates" in normalized_data:
-        coordinates = normalized_data["coordinates"]
-
-        # field.coordinates = coordinates
-
-        latitude, longitude = _parse_coordinates(coordinates)
-        field.latitude = latitude
-        field.longitude = longitude
-
-    if "latitude" in normalized_data:
-        field.latitude = normalized_data["latitude"]
-
-    if "longitude" in normalized_data:
-        field.longitude = normalized_data["longitude"]
 
     db.session.commit()
 
@@ -281,18 +353,20 @@ def _parse_planting_date(value):
 
 
 def _create_field_model(data, user_id, planting_date):
-    latitude = data.get("latitude")
-    longitude = data.get("longitude")
+    latitude = _coerce_coordinate(data.get("latitude"), "Latitude", -90, 90)
+    longitude = _coerce_coordinate(data.get("longitude"), "Longitude", -180, 180)
     coordinates = data.get("coordinates")
 
     if coordinates and (latitude is None or longitude is None):
         latitude, longitude = _parse_coordinates(coordinates)
 
+    location = _resolve_location(data.get("location"), latitude, longitude)
+
     return Field(
         name=data["name"].strip(),
         size=data["size"],
-        size_unit=data.get("size_unit") or data.get("unit") or "acres",
-        location=data["location"].strip(),
+        size_unit=data.get("size_unit") or data.get("unit") or "hectares",
+        location=location,
         country=data.get("country"),
         latitude=latitude,
         longitude=longitude,
@@ -372,8 +446,83 @@ def _parse_coordinates(value):
     if not value:
         return None, None
 
+    if isinstance(value, str):
+        try:
+            lat_raw, lon_raw = value.split(",", 1)
+            return (
+                _coerce_coordinate(lat_raw, "Latitude", -90, 90),
+                _coerce_coordinate(lon_raw, "Longitude", -180, 180)
+            )
+        except ValueError:
+            raise BadRequestError("Invalid coordinates format. Use 'lat, lon'")
+
+    if isinstance(value, dict):
+        lat_raw = value.get("lat", value.get("latitude"))
+        lon_raw = value.get("lng", value.get("longitude"))
+        if lat_raw in (None, "") or lon_raw in (None, ""):
+            raise BadRequestError("Coordinates object must include lat/lng values")
+        return (
+            _coerce_coordinate(lat_raw, "Latitude", -90, 90),
+            _coerce_coordinate(lon_raw, "Longitude", -180, 180)
+        )
+
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return (
+            _coerce_coordinate(value[0], "Latitude", -90, 90),
+            _coerce_coordinate(value[1], "Longitude", -180, 180)
+        )
+
+    raise BadRequestError("Invalid coordinates format. Use 'lat, lon'")
+
+
+def _coerce_coordinate(value, label, min_value, max_value):
+    if value in (None, ""):
+        return None
+
     try:
-        lat_raw, lon_raw = value.split(",", 1)
-        return float(lat_raw.strip()), float(lon_raw.strip())
-    except (ValueError, AttributeError):
-        raise BadRequestError("Invalid coordinates format. Use 'lat, lon'")
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        raise BadRequestError(f"{label} must be a valid number")
+
+    if not (min_value <= numeric_value <= max_value):
+        raise BadRequestError(f"{label} must be between {min_value} and {max_value}")
+
+    return numeric_value
+
+
+def _resolve_location(location_value, latitude, longitude):
+    if latitude is not None and longitude is not None:
+        return resolve_location_from_coordinates(latitude, longitude)
+
+    if isinstance(location_value, str):
+        location_value = location_value.strip()
+    elif location_value is not None:
+        raise BadRequestError("Location must be a string")
+
+    if location_value:
+        return location_value
+
+    raise BadRequestError("Provide either location or coordinates (latitude/longitude)")
+
+
+def _extract_location_name(address):
+    if not isinstance(address, dict):
+        return None
+
+    locality_keys = (
+        "city",
+        "town",
+        "village",
+        "municipality",
+        "county",
+        "state_district",
+        "state",
+        "country",
+    )
+
+    for key in locality_keys:
+        value = address.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
