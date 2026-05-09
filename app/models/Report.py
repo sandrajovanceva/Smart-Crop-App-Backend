@@ -40,7 +40,6 @@ class Report(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "size": self._size_label(),
             "file_size": self.file_size,
-            "status": self.status,
             "summary": self.summary,
             "user_id": self.user_id,
 

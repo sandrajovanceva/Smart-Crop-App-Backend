@@ -491,16 +491,14 @@ def _coerce_coordinate(value, label, min_value, max_value):
 
 
 def _resolve_location(location_value, latitude, longitude):
+    if isinstance(location_value, str) and location_value.strip():
+        return location_value.strip()
+
     if latitude is not None and longitude is not None:
-        return resolve_location_from_coordinates(latitude, longitude)
-
-    if isinstance(location_value, str):
-        location_value = location_value.strip()
-    elif location_value is not None:
-        raise BadRequestError("Location must be a string")
-
-    if location_value:
-        return location_value
+        resolved = reverse_geocode(latitude, longitude)
+        if resolved and resolved.strip():
+            return resolved.strip()
+        return f"{round(latitude, 4)}, {round(longitude, 4)}"
 
     raise BadRequestError("Provide either location or coordinates (latitude/longitude)")
 

@@ -10,7 +10,9 @@ def get_cached_or_generate_advice(
         country,
         prompt,
         not_found_message=None,
-        weather_data=None
+        weather_data=None,
+        lat=None,
+        lon=None,
 ):
     cached = CacheService.get_cached_advice(
         crop=crop,
@@ -25,6 +27,9 @@ def get_cached_or_generate_advice(
     if weather_data is None:
         weather_service = WeatherService()
         weather_data = weather_service.get_weather_by_location(location, country)
+
+        if not weather_data and lat is not None and lon is not None:
+            weather_data = weather_service.get_weather_by_coords(lat, lon, location_name=location)
 
     if not weather_data:
         raise NotFoundError(not_found_message or f"Location '{location}' not found")

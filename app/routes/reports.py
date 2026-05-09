@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import textwrap
 from datetime import datetime, timedelta
 
@@ -381,13 +382,16 @@ def generate_report():
     title = data.get("title") or f"{field.name} - {report_type}"
     summary = data.get("summary") or payload.get("summary")
 
+    payload_bytes = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    file_size = round(payload_bytes / (1024 * 1024), 3)
+
     report = Report(
         title=title,
         report_type=report_type,
         summary=summary,
         payload=payload,
         status="Completed",
-        file_size=data.get("file_size"),
+        file_size=file_size,
         field_id=field.id,
         user_id=user_id,
     )
@@ -412,7 +416,7 @@ def export_reports_csv():
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow(["Name", "Field", "Type", "Date", "Size", "Status"])
+    writer.writerow(["Name", "Field", "Type", "Date", "Size", "Summary"])
 
     for report in reports:
         row = report.to_dict()
@@ -422,16 +426,299 @@ def export_reports_csv():
             row["type"],
             row["date"],
             row["size"],
-            row["status"],
+            row["summary"] or "",
         ])
 
     return Response(
-        output.getvalue(),
-        mimetype="text/csv",
+        output.getvalue().encode("utf-8-sig"),
+        mimetype="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": "attachment; filename=reports.csv"
         }
     )
+
+_PDF_LEFT = 50
+_PDF_RIGHT = 545
+_PDF_BOTTOM = 65
+_PDF_TOP = 800
+_PDF_LINE = 16
+
+
+def _pdf_ensure_space(pdf, y, needed=None):
+    if needed is None:
+        needed = _PDF_LINE
+    if y - needed < _PDF_BOTTOM:
+        pdf.showPage()
+        pdf.setFont("Helvetica", 10)
+        return _PDF_TOP
+    return y
+
+
+def _pdf_section_header(pdf, y, title):
+    y = _pdf_ensure_space(pdf, y, 40)
+    y -= 8
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(_PDF_LEFT, y, title)
+    y -= 5
+    pdf.setLineWidth(0.5)
+    pdf.line(_PDF_LEFT, y, _PDF_RIGHT, y)
+    y -= _PDF_LINE
+    pdf.setFont("Helvetica", 10)
+    return y
+
+
+def _pdf_kv(pdf, y, label, value):
+    val_str = str(value) if value is not None else "—"
+    y = _pdf_ensure_space(pdf, y)
+    pdf.setFont("Helvetica-Bold", 10)
+    label_text = f"{label}: "
+    label_w = pdf.stringWidth(label_text, "Helvetica-Bold", 10)
+    pdf.drawString(_PDF_LEFT + 10, y, label_text)
+    pdf.setFont("Helvetica", 10)
+    avail_w = _PDF_RIGHT - _PDF_LEFT - 10 - label_w
+    val_lines = textwrap.wrap(val_str, width=max(20, int(avail_w / 5.5))) or [val_str]
+    pdf.drawString(_PDF_LEFT + 10 + label_w, y, val_lines[0])
+    y -= _PDF_LINE
+    for extra in val_lines[1:]:
+        y = _pdf_ensure_space(pdf, y)
+        pdf.drawString(_PDF_LEFT + 10 + label_w, y, extra)
+        y -= _PDF_LINE
+    return y
+
+
+def _pdf_bullet(pdf, y, text):
+    lines = textwrap.wrap(text, width=78) or [text]
+    for i, line in enumerate(lines):
+        y = _pdf_ensure_space(pdf, y)
+        pdf.setFont("Helvetica", 10)
+        prefix = "•  " if i == 0 else "    "
+        pdf.drawString(_PDF_LEFT + 15, y, prefix + line)
+        y -= _PDF_LINE
+    return y
+
+
+def _pdf_body_crop_analysis(pdf, payload, y):
+    health_data = payload.get("healthData") or payload.get("health_data") or []
+    if health_data:
+        y = _pdf_section_header(pdf, y, "Crop Health")
+        for item in health_data:
+            if isinstance(item, dict):
+                y = _pdf_kv(pdf, y, item.get("name", "Health"), f"{item.get('value', '—')}/100")
+
+    conditions = payload.get("conditions") or []
+    if conditions:
+        y = _pdf_section_header(pdf, y, "Current Conditions")
+        for c in conditions:
+            if isinstance(c, dict):
+                y = _pdf_kv(pdf, y, c.get("label") or c.get("name", ""), c.get("value", "—"))
+
+    disease_risks = payload.get("diseaseRisks") or payload.get("disease_risks") or []
+    if disease_risks:
+        y = _pdf_section_header(pdf, y, "Disease Risks")
+        for r in disease_risks:
+            if isinstance(r, dict):
+                y = _pdf_kv(pdf, y, r.get("name", "Risk"), f"{r.get('risk', '—')}/100")
+
+    recommendations = payload.get("recommendations") or []
+    if recommendations:
+        y = _pdf_section_header(pdf, y, "Recommendations")
+        for rec in recommendations:
+            if not isinstance(rec, dict):
+                continue
+            title = rec.get("title") or rec.get("type") or "Recommendation"
+            priority = rec.get("priority", "")
+            desc = rec.get("description") or rec.get("action") or ""
+            header = f"{title} [{priority}]" if priority else title
+            y = _pdf_bullet(pdf, y, header)
+            if desc:
+                for line in textwrap.wrap(desc, width=74) or [desc]:
+                    y = _pdf_ensure_space(pdf, y)
+                    pdf.setFont("Helvetica", 9)
+                    pdf.drawString(_PDF_LEFT + 30, y, line)
+                    y -= _PDF_LINE - 2
+                pdf.setFont("Helvetica", 10)
+    return y
+
+
+def _pdf_body_disease_risk(pdf, payload, y):
+    risk_metrics = payload.get("riskMetrics") or payload.get("risk_metrics") or []
+    if risk_metrics:
+        y = _pdf_section_header(pdf, y, "Risk Overview")
+        for m in risk_metrics:
+            if isinstance(m, dict):
+                y = _pdf_kv(pdf, y, m.get("label", "Risk"), m.get("value", "—"))
+
+    alerts = payload.get("alerts") or payload.get("diseaseAlerts") or []
+    if alerts:
+        y = _pdf_section_header(pdf, y, "Disease Alerts")
+        for alert in alerts:
+            if not isinstance(alert, dict):
+                continue
+            name = alert.get("name") or "Unknown"
+            severity = alert.get("severity") or "—"
+            prob = alert.get("probability")
+            prob_str = f"{prob}/100" if prob is not None else "—"
+            y = _pdf_kv(pdf, y, name, f"Severity: {severity}  |  Probability: {prob_str}")
+            symptoms = alert.get("symptoms")
+            if symptoms:
+                y = _pdf_bullet(pdf, y, f"Symptoms: {symptoms}")
+            prevention = alert.get("prevention")
+            if prevention:
+                y = _pdf_bullet(pdf, y, f"Prevention: {prevention}")
+            y -= 4
+
+    vuln = payload.get("vulnerabilityFactors") or payload.get("vulnerability_factors") or []
+    if vuln:
+        y = _pdf_section_header(pdf, y, "Vulnerability Factors")
+        for v in vuln:
+            if isinstance(v, dict):
+                factor = v.get("factor") or v.get("label") or "Factor"
+                impact = v.get("impact") or v.get("value")
+                val = f"{impact}/100" if isinstance(impact, (int, float)) else (impact or "—")
+                y = _pdf_kv(pdf, y, factor, val)
+
+    prev_recs = payload.get("preventionRecommendations") or payload.get("prevention_recommendations") or []
+    if prev_recs:
+        y = _pdf_section_header(pdf, y, "Prevention Recommendations")
+        for rec in prev_recs:
+            if isinstance(rec, str):
+                y = _pdf_bullet(pdf, y, rec)
+            elif isinstance(rec, dict):
+                y = _pdf_bullet(pdf, y, rec.get("title") or rec.get("text") or str(rec))
+    return y
+
+
+def _pdf_body_fertilizer(pdf, payload, y):
+    metrics = payload.get("ai_metrics") or payload.get("aiMetrics") or []
+    if metrics:
+        y = _pdf_section_header(pdf, y, "AI Recommendations")
+        for m in metrics:
+            if isinstance(m, dict):
+                y = _pdf_kv(pdf, y, m.get("label", ""), m.get("value", "—"))
+
+    schedule = payload.get("schedule") or []
+    if schedule:
+        y = _pdf_section_header(pdf, y, "Fertilizer Schedule")
+        for s in schedule:
+            if not isinstance(s, dict):
+                continue
+            week = s.get("week") or ""
+            ftype = s.get("type") or "—"
+            rate = s.get("rate") or "—"
+            status = s.get("status") or ""
+            line = f"{week}: {ftype}, {rate}"
+            if status:
+                line += f"  [{status}]"
+            y = _pdf_bullet(pdf, y, line)
+
+    guidelines = payload.get("guidelines") or []
+    if guidelines:
+        y = _pdf_section_header(pdf, y, "Guidelines")
+        for g in guidelines:
+            if isinstance(g, dict):
+                title = g.get("title") or ""
+                desc = g.get("text") or g.get("description") or ""
+                if title:
+                    y = _pdf_bullet(pdf, y, title)
+                if desc:
+                    for line in textwrap.wrap(desc, width=74) or [desc]:
+                        y = _pdf_ensure_space(pdf, y)
+                        pdf.setFont("Helvetica", 9)
+                        pdf.drawString(_PDF_LEFT + 30, y, line)
+                        y -= _PDF_LINE - 2
+                    pdf.setFont("Helvetica", 10)
+            elif isinstance(g, str):
+                y = _pdf_bullet(pdf, y, g)
+
+    activities = payload.get("recommended_activities") or []
+    if activities:
+        y = _pdf_section_header(pdf, y, "Recommended Activities")
+        for act in activities:
+            if isinstance(act, str):
+                y = _pdf_bullet(pdf, y, act)
+            elif isinstance(act, dict):
+                y = _pdf_bullet(pdf, y, act.get("title") or act.get("text") or str(act))
+    return y
+
+
+def _pdf_body_weather(pdf, payload, y):
+    current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
+    if current:
+        y = _pdf_section_header(pdf, y, "Current Conditions")
+        temp = current.get("temperature")
+        if temp is not None:
+            y = _pdf_kv(pdf, y, "Temperature", f"{temp}°C")
+        desc = current.get("description")
+        if desc:
+            y = _pdf_kv(pdf, y, "Conditions", desc)
+        humidity = current.get("humidity")
+        if humidity is not None:
+            y = _pdf_kv(pdf, y, "Humidity", f"{humidity}%")
+        wind = current.get("wind_speed")
+        if wind is not None:
+            y = _pdf_kv(pdf, y, "Wind Speed", f"{wind} m/s")
+
+    impacts = payload.get("impacts") or []
+    if impacts:
+        y = _pdf_section_header(pdf, y, "Weather Impacts on Crop")
+        for imp in impacts:
+            if not isinstance(imp, dict):
+                continue
+            label = imp.get("label") or "Impact"
+            level = imp.get("level") or "—"
+            percent = imp.get("percent")
+            desc = imp.get("description") or ""
+            val = level
+            if percent is not None:
+                val += f"  ({percent}%)"
+            y = _pdf_kv(pdf, y, label, val)
+            if desc:
+                for line in textwrap.wrap(desc, width=76) or [desc]:
+                    y = _pdf_ensure_space(pdf, y)
+                    pdf.setFont("Helvetica-Oblique", 9)
+                    pdf.drawString(_PDF_LEFT + 20, y, line)
+                    y -= _PDF_LINE - 2
+                pdf.setFont("Helvetica", 10)
+                y -= 4
+    return y
+
+
+def _pdf_body_irrigation(pdf, payload, y):
+    water_needs = payload.get("water_needs") or []
+    if water_needs:
+        y = _pdf_section_header(pdf, y, "Water Needs")
+        for w in water_needs:
+            if isinstance(w, dict):
+                y = _pdf_kv(pdf, y, w.get("label", ""), w.get("value", "—"))
+
+    schedule = payload.get("schedule") or []
+    if schedule:
+        y = _pdf_section_header(pdf, y, "Irrigation Schedule")
+        for s in schedule:
+            if isinstance(s, dict):
+                period = s.get("period") or "—"
+                rec = s.get("recommendation") or "—"
+                y = _pdf_kv(pdf, y, period, rec)
+
+    recs = payload.get("irrigation_recommendations") or []
+    if recs:
+        y = _pdf_section_header(pdf, y, "Recommendations")
+        for r in recs:
+            if not isinstance(r, dict):
+                continue
+            title = r.get("title") or "Recommendation"
+            priority = r.get("priority") or ""
+            desc = r.get("description") or ""
+            header = f"{title} [{priority}]" if priority else title
+            y = _pdf_bullet(pdf, y, header)
+            if desc:
+                for line in textwrap.wrap(desc, width=74) or [desc]:
+                    y = _pdf_ensure_space(pdf, y)
+                    pdf.setFont("Helvetica", 9)
+                    pdf.drawString(_PDF_LEFT + 30, y, line)
+                    y -= _PDF_LINE - 2
+                pdf.setFont("Helvetica", 10)
+    return y
 
 
 @reports_bp.route('/<int:report_id>/download/pdf', methods=['GET'])
@@ -470,17 +757,44 @@ def download_report_pdf(report_id):
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
 
-    pdf.drawString(50, 800, report.title)
-    pdf.drawString(50, 775, f"Type: {report.report_type}")
-    pdf.drawString(50, 750, f"Field: {report.field.name if report.field else '—'}")
-    pdf.drawString(50, 725, f"Status: {report.status}")
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(_PDF_LEFT, 800, report.title)
 
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(_PDF_LEFT, 778, f"Type: {report.report_type}")
+    field_name = report.field.name if report.field else "—"
+    pdf.drawString(_PDF_LEFT, 762, f"Field: {field_name}")
+    date_str = report.created_at.strftime("%B %d, %Y") if report.created_at else "—"
+    pdf.drawString(_PDF_LEFT, 746, f"Date: {date_str}")
+
+    pdf.setLineWidth(1)
+    pdf.line(_PDF_LEFT, 738, _PDF_RIGHT, 738)
+
+    y = 722
     summary_text = _resolve_report_summary(report)
-    summary_lines = textwrap.wrap(f"Summary: {summary_text}", width=90)
-    y = 700
-    for line in summary_lines:
-        pdf.drawString(50, y, line)
-        y -= 15
+    if summary_text:
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(_PDF_LEFT, y, "Summary")
+        y -= _PDF_LINE
+        pdf.setFont("Helvetica", 10)
+        for line in textwrap.wrap(summary_text, width=88):
+            y = _pdf_ensure_space(pdf, y)
+            pdf.drawString(_PDF_LEFT, y, line)
+            y -= _PDF_LINE
+        y -= 6
+
+    payload = report.payload or {}
+    rt = report.report_type
+    if rt == "Crop Analysis":
+        y = _pdf_body_crop_analysis(pdf, payload, y)
+    elif rt == "Disease Risk":
+        y = _pdf_body_disease_risk(pdf, payload, y)
+    elif rt == "Fertilizer":
+        y = _pdf_body_fertilizer(pdf, payload, y)
+    elif rt == "Weather Analysis":
+        y = _pdf_body_weather(pdf, payload, y)
+    elif rt == "Irrigation":
+        y = _pdf_body_irrigation(pdf, payload, y)
 
     pdf.showPage()
     pdf.save()
