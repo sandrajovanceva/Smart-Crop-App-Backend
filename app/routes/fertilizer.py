@@ -52,7 +52,7 @@ def recommend_fertilizer():
             or "Vegetative"
     )
 
-    crop, location, country = resolve_crop_location(data, user_id)
+    crop, location, country, lat, lon = resolve_crop_location(data, user_id)
 
     fertilizer_prompt = build_fertilizer_prompt(
         crop=crop,
@@ -65,7 +65,9 @@ def recommend_fertilizer():
         location=location,
         country=country,
         prompt=fertilizer_prompt,
-        not_found_message=f"Местото '{location}' не е пронајдено"
+        not_found_message=f"Местото '{location}' не е пронајдено",
+        lat=lat,
+        lon=lon,
     )
 
     return jsonify(
@@ -220,7 +222,7 @@ def extract_fertilizer_info(advice_response, crop, location, growth_stage):
     schedule = [
         {
             "week": item.get("week"),
-            "dates": item.get("dates"),
+            "dates": _format_schedule_dates(item.get("dates")),
             "type": item.get("type"),
             "rate": item.get("rate"),
             "status": item.get("status"),
@@ -271,6 +273,30 @@ def _ensure_list(value):
         return value
 
     return []
+
+
+_DATE_FORMATS = ["%Y/%m/%d", "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"]
+
+
+def _parse_single_date(s):
+    s = s.strip()
+    for fmt in _DATE_FORMATS:
+        try:
+            d = datetime.strptime(s, fmt)
+            return f"{d.strftime('%B')} {d.day}"
+        except ValueError:
+            continue
+    return s
+
+
+def _format_schedule_dates(dates_str):
+    if not isinstance(dates_str, str) or not dates_str.strip():
+        return dates_str
+    for sep in [" - ", " to ", " – ", "–", "-"]:
+        if sep in dates_str:
+            parts = dates_str.split(sep, 1)
+            return f"{_parse_single_date(parts[0])} – {_parse_single_date(parts[1])}"
+    return _parse_single_date(dates_str)
 
 
 def _status_color(status):

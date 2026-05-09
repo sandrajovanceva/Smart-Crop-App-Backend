@@ -36,6 +36,7 @@ class WeatherService:
             },
             "current": self._format_current(current),
             "forecast_5_days": self._format_forecast(forecast),
+            "forecast_24h": self._format_24h(forecast),
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
 
@@ -71,6 +72,7 @@ class WeatherService:
             },
             "current": self._format_current(current),
             "forecast_5_days": self._format_forecast(forecast),
+            "forecast_24h": self._format_24h(forecast),
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
 
@@ -238,6 +240,18 @@ class WeatherService:
         }
 
     @staticmethod
+    def _format_24h(data):
+        result = []
+        for item in data["list"][:8]:
+            result.append({
+                "time": datetime.fromtimestamp(item["dt"]).strftime("%H:%M"),
+                "temp": round(item["main"]["temp"], 1),
+                "humidity": item["main"]["humidity"],
+                "rain_3h": round(item.get("rain", {}).get("3h", 0), 2),
+            })
+        return result
+
+    @staticmethod
     def _format_forecast(data):
         daily = defaultdict(list)
         for item in data["list"]:
@@ -251,9 +265,11 @@ class WeatherService:
             rains = [i.get("rain", {}).get("3h", 0) for i in items]
             pops = [i.get("pop", 0) for i in items]
             winds = [i["wind"]["speed"] for i in items]
+            d = datetime.strptime(date, "%Y-%m-%d")
+            display_date = f"{d.strftime('%B')} {d.day}"
 
             result.append({
-                "date": date,
+                "date": display_date,
                 "temp_min": round(min(temps), 1),
                 "temp_max": round(max(temps), 1),
                 "temp_avg": round(sum(temps) / len(temps), 1),
@@ -303,19 +319,25 @@ class WeatherService:
             if rain_3h >= 10 and date not in heavy_rain_days:
                 heavy_rain_days.append(date)
 
+        def _fmt(d_str):
+            d = datetime.strptime(d_str, "%Y-%m-%d")
+            return f"{d.strftime('%B')} {d.day}"
+
         if frost_days:
+            formatted_frost = [_fmt(d) for d in frost_days]
             alerts.append({
                 "severity": "high",
                 "type": "upcoming_frost",
-                "message": f"Можен мраз на следниве денови: {', '.join(frost_days)}",
-                "dates": frost_days,
+                "message": f"Можен мраз на следниве денови: {', '.join(formatted_frost)}",
+                "dates": formatted_frost,
             })
         if heavy_rain_days:
+            formatted_rain = [_fmt(d) for d in heavy_rain_days]
             alerts.append({
                 "severity": "medium",
                 "type": "heavy_rain",
-                "message": f"Очекувани обилни врнежи: {', '.join(heavy_rain_days)}",
-                "dates": heavy_rain_days,
+                "message": f"Очекувани обилни врнежи: {', '.join(formatted_rain)}",
+                "dates": formatted_rain,
             })
 
         return alerts

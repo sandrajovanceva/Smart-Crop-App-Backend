@@ -39,7 +39,7 @@ def assess_disease_risk():
     user_id = get_jwt_identity()
     data = request.get_json(silent=True) or {}
 
-    crop, location, country = resolve_crop_location(data, user_id)
+    crop, location, country, lat, lon = resolve_crop_location(data, user_id)
 
     disease_prompt = build_disease_prompt(
         crop=crop,
@@ -51,7 +51,9 @@ def assess_disease_risk():
         location=location,
         country=country,
         prompt=disease_prompt,
-        not_found_message=f"Местото '{location}' не е пронајдено"
+        not_found_message=f"Местото '{location}' не е пронајдено",
+        lat=lat,
+        lon=lon,
     )
 
     return jsonify(

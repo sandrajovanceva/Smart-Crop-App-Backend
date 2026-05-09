@@ -18,6 +18,9 @@ def generate_report_payload(field, report_type, data):
     crop = field.crop_type
     location = field.location
 
+    lat = field.latitude
+    lon = field.longitude
+
     if report_type == "Crop Analysis":
         prompt = build_crop_analysis_prompt(crop=crop, location=location)
 
@@ -26,7 +29,9 @@ def generate_report_payload(field, report_type, data):
             location=location,
             country=country,
             prompt=prompt,
-            not_found_message=f"Location '{location}' not found"
+            not_found_message=f"Location '{location}' not found",
+            lat=lat,
+            lon=lon,
         )
 
         payload = build_crop_analysis_response(
@@ -45,7 +50,9 @@ def generate_report_payload(field, report_type, data):
             location=location,
             country=country,
             prompt=prompt,
-            not_found_message=f"Местото '{location}' не е пронајдено"
+            not_found_message=f"Местото '{location}' не е пронајдено",
+            lat=lat,
+            lon=lon,
         )
 
         payload = extract_disease_info(
@@ -74,7 +81,9 @@ def generate_report_payload(field, report_type, data):
             location=location,
             country=country,
             prompt=prompt,
-            not_found_message=f"Местото '{location}' не е пронајдено"
+            not_found_message=f"Местото '{location}' не е пронајдено",
+            lat=lat,
+            lon=lon,
         )
 
         payload = extract_fertilizer_info(
@@ -88,7 +97,10 @@ def generate_report_payload(field, report_type, data):
 
     if report_type == "Weather Analysis":
         service = WeatherService()
-        weather_data = service.get_weather_by_location(location, country_code=country)
+        if lat is not None and lon is not None:
+            weather_data = service.get_weather_by_coords(lat, lon, location_name=location)
+        else:
+            weather_data = service.get_weather_by_location(location, country_code=country)
 
         if not weather_data:
             raise NotFoundError(f"Местото '{location}' не е пронајдено")
@@ -101,7 +113,9 @@ def generate_report_payload(field, report_type, data):
             country=country,
             prompt=weather_prompt,
             weather_data=weather_data,
-            not_found_message=f"Местото '{location}' не е пронајдено"
+            not_found_message=f"Местото '{location}' не е пронајдено",
+            lat=lat,
+            lon=lon,
         )
 
         impacts = extract_weather_impacts(advice_response)
@@ -125,7 +139,9 @@ def generate_report_payload(field, report_type, data):
             location=location,
             country=country,
             prompt=prompt,
-            not_found_message=f"Местото '{location}' не е пронајдено"
+            not_found_message=f"Местото '{location}' не е пронајдено",
+            lat=lat,
+            lon=lon,
         )
 
         payload = _extract_irrigation_report_info(

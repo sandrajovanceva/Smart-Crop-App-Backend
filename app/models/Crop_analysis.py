@@ -10,7 +10,8 @@ class CropAnalysis(db.Model):
     disease_risk = db.Column(db.String(50))              
     disease_details = db.Column(db.Text)                 
     fertilizer_advice = db.Column(db.Text)               
-    confidence_score = db.Column(db.Float)               
+    confidence_score = db.Column(db.Float)
+    health_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     

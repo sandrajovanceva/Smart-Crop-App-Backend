@@ -27,26 +27,70 @@ class Field(db.Model):
     weather_data = db.relationship('WeatherData', backref='field', lazy=True)
     reports = db.relationship('Report', backref='field', lazy=True)
 
+    def _latest_crop_analysis_report(self):
+        crop_reports = [r for r in (self.reports or []) if r.report_type == "Crop Analysis" and r.payload]
+        if not crop_reports:
+            return None
+        return max(crop_reports, key=lambda r: r.created_at or datetime.min)
+
     def _latest_analysis(self):
-        if not self.crop_analyses:
-            return None
+        if self.crop_analyses:
+            return max(
+                self.crop_analyses,
+                key=lambda analysis: analysis.created_at or datetime.min
+            )
+        return self._latest_crop_analysis_report()
 
-        return max(
-            self.crop_analyses,
-            key=lambda analysis: analysis.created_at or datetime.min
-        )
+    def _health_from_report(self):
+        report = self._latest_crop_analysis_report()
+        if report:
+            payload = report.payload or {}
+            health_data = payload.get("healthData") or payload.get("health_data") or []
+            for item in health_data:
+                if isinstance(item, dict) and isinstance(item.get("value"), (int, float)):
+                    return item["value"]
 
-    def _analysis_value(self, analysis, *possible_fields):
-        if not analysis:
-            return None
-
-        for field_name in possible_fields:
-            value = getattr(analysis, field_name, None)
-
-            if value is not None:
-                return value
+        if self.crop_analyses:
+            latest = max(self.crop_analyses, key=lambda a: a.created_at or datetime.min)
+            if latest.health_score is not None:
+                return latest.health_score
 
         return None
+
+    def _risk_from_report(self):
+        report = self._latest_crop_analysis_report()
+        if not report:
+            return None
+        payload = report.payload or {}
+        disease_risks = payload.get("diseaseRisks") or payload.get("disease_risks") or []
+        values = [r["risk"] for r in disease_risks if isinstance(r, dict) and isinstance(r.get("risk"), (int, float))]
+        return max(values) if values else None
+
+    def _risk_level(self):
+        risk = self._risk_from_report()
+        if risk is None:
+            return None
+        if risk >= 70:
+            return "High"
+        if risk >= 40:
+            return "Medium"
+        return "Low"
+
+    def _alerts_count_from_latest_weather(self):
+        if not self.weather_data:
+            return 0
+        latest = max(self.weather_data, key=lambda w: w.recorded_at or datetime.min)
+        count = 0
+        temp = latest.temperature
+        humidity = latest.humidity
+        wind = latest.wind_speed
+        if temp is not None and temp <= 2:
+            count += 1
+        if wind is not None and wind >= 10:
+            count += 1
+        if humidity is not None and temp is not None and humidity >= 85 and temp >= 15:
+            count += 1
+        return count
 
     def _last_analysis_label(self):
         latest_analysis = self._latest_analysis()
@@ -75,26 +119,9 @@ class Field(db.Model):
         return "1 week ago" if weeks == 1 else f"{weeks} weeks ago"
 
     def to_dict(self):
-        latest_analysis = self._latest_analysis()
-
-        health = self._analysis_value(
-            latest_analysis,
-            "health",
-            "health_score",
-            "score"
-        )
-
-        status = self._analysis_value(
-            latest_analysis,
-            "status",
-            "health_status"
-        )
-
-        risk = self._analysis_value(
-            latest_analysis,
-            "risk",
-            "risk_level"
-        )
+        health = self._health_from_report()
+        risk = self._risk_level()
+        status = None
 
         planting_iso = (
             self.planting_date.isoformat()
@@ -140,4 +167,5 @@ class Field(db.Model):
             "notes": self.notes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "user_id": self.user_id,
+            "alerts_count": self._alerts_count_from_latest_weather(),
         }

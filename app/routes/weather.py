@@ -4,8 +4,10 @@ from flasgger import swag_from
 from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
+from app import db
 from app.errors import BadRequestError, NotFoundError
 from app.models.Field import Field
+from app.models.Weather_data import WeatherData
 from app.services.weather_service import WeatherService
 from app.utils.ai_advice_runner import get_cached_or_generate_advice
 
@@ -145,7 +147,26 @@ def weather_by_field(field_id):
         if not data:
             raise NotFoundError(f"Не може да се добие време за '{field.location}'")
 
+    _save_weather_snapshot(field_id, data)
+
     return jsonify(data), 200
+
+
+def _save_weather_snapshot(field_id, weather_data):
+    current = weather_data.get("current") or {}
+    try:
+        entry = WeatherData(
+            field_id=field_id,
+            temperature=current.get("temperature"),
+            humidity=current.get("humidity"),
+            rainfall=current.get("rain_1h_mm", 0),
+            wind_speed=current.get("wind_speed"),
+            description=current.get("description"),
+        )
+        db.session.add(entry)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 @weather_bp.route("/by-location", methods=["GET"])
@@ -317,6 +338,7 @@ def weather_dashboard():
 def build_weather_dashboard_response(weather_data, location, impacts):
     current = weather_data.get("current", {})
     forecast = weather_data.get("forecast") or weather_data.get("forecast_5_days", [])
+    forecast_24h = weather_data.get("forecast_24h", [])
 
     temperature = current.get("temperature")
     humidity = current.get("humidity")
@@ -357,7 +379,7 @@ def build_weather_dashboard_response(weather_data, location, impacts):
             }
         ],
         "forecast": _build_forecast_data(forecast),
-        "temperatureData": _build_temperature_data(forecast),
+        "temperatureData": _build_temperature_data(forecast_24h),
         "humidityData": _build_humidity_data(forecast),
         "rainfallData": _build_rainfall_data(forecast),
         "impacts": impacts
@@ -430,19 +452,67 @@ Rules:
 """
 
 
+_IMPACT_LEVEL_STYLES = {
+    "Excellent": {
+        "iconBg": "bg-green-100",
+        "iconColor": "text-green-600",
+        "barColor": "bg-green-500",
+        "levelColor": "text-green-600",
+    },
+    "Good": {
+        "iconBg": "bg-green-100",
+        "iconColor": "text-green-600",
+        "barColor": "bg-green-500",
+        "levelColor": "text-green-600",
+    },
+    "Moderate": {
+        "iconBg": "bg-yellow-100",
+        "iconColor": "text-yellow-600",
+        "barColor": "bg-yellow-500",
+        "levelColor": "text-yellow-600",
+    },
+    "Poor": {
+        "iconBg": "bg-red-100",
+        "iconColor": "text-red-600",
+        "barColor": "bg-red-500",
+        "levelColor": "text-red-600",
+    },
+    "Unknown": {
+        "iconBg": "bg-gray-100",
+        "iconColor": "text-gray-500",
+        "barColor": "bg-gray-400",
+        "levelColor": "text-gray-500",
+    },
+}
+
+_VALID_IMPACT_LEVELS = {"Excellent", "Good", "Moderate", "Poor", "Unknown"}
+
+
 def extract_weather_impacts(advice_response):
     advice_data = advice_response.get("advice", {}) or {}
     advice_inner = advice_data.get("advice") or {}
 
     impacts = advice_inner.get("weather_impacts")
 
-    if isinstance(impacts, list):
-        return [
-            impact for impact in impacts
-            if isinstance(impact, dict)
-        ]
+    if not isinstance(impacts, list):
+        return []
 
-    return []
+    result = []
+    for impact in impacts:
+        if not isinstance(impact, dict):
+            continue
+        level = impact.get("level") if impact.get("level") in _VALID_IMPACT_LEVELS else "Unknown"
+        styles = _IMPACT_LEVEL_STYLES[level]
+        result.append({
+            **impact,
+            "level": level,
+            "iconBg": styles["iconBg"],
+            "iconColor": styles["iconColor"],
+            "barColor": styles["barColor"],
+            "levelColor": styles["levelColor"],
+        })
+
+    return result
 
 
 def _build_forecast_data(forecast):
@@ -467,16 +537,11 @@ def _build_forecast_data(forecast):
     return result
 
 
-def _build_temperature_data(forecast):
-    result = []
-
-    for item in forecast[:5]:
-        result.append({
-            "time": _day_label(item.get("date")),
-            "temp": item.get("temp_avg")
-        })
-
-    return result
+def _build_temperature_data(forecast_24h):
+    return [
+        {"time": item.get("time"), "temp": item.get("temp")}
+        for item in forecast_24h
+    ]
 
 
 def _build_humidity_data(forecast):
@@ -518,6 +583,7 @@ def _date_label(date_value):
         return None
 
     try:
-        return datetime.fromisoformat(date_value).strftime("%b %d")
+        d = datetime.fromisoformat(date_value)
+        return f"{d.strftime('%B')} {d.day}"
     except ValueError:
         return date_value
