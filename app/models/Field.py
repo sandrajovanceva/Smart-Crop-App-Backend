@@ -23,9 +23,9 @@ class Field(db.Model):
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
 
-    crop_analyses = db.relationship('CropAnalysis', backref='field', lazy=True)
-    weather_data = db.relationship('WeatherData', backref='field', lazy=True)
-    reports = db.relationship('Report', backref='field', lazy=True)
+    crop_analyses = db.relationship('CropAnalysis', backref='field', lazy=True, cascade='all, delete-orphan')
+    weather_data = db.relationship('WeatherData', backref='field', lazy=True, cascade='all, delete-orphan')
+    reports = db.relationship('Report', backref='field', lazy=True, cascade='all, delete-orphan')
 
     def _latest_crop_analysis_report(self):
         crop_reports = [r for r in (self.reports or []) if r.report_type == "Crop Analysis" and r.payload]
