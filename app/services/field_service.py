@@ -7,7 +7,10 @@ from flask import current_app
 
 from app import db
 from app.errors import BadRequestError, NotFoundError
+from app.models.Crop_analysis import CropAnalysis
 from app.models.Field import Field
+from app.models.Report import Report
+from app.models.Weather_data import WeatherData
 from app.utils.validators import validate_field_input
 
 REQUIRED_CSV_COLUMNS = ["name", "size", "location", "crop_type"]
@@ -278,8 +281,38 @@ def delete_field(field_id, user_id):
     if not field:
         raise NotFoundError("Field not found")
 
+    related_delete_counts = _delete_related_field_records(field.id)
+
     db.session.delete(field)
     db.session.commit()
+
+    current_app.logger.info(
+        "delete field service completed",
+        extra={
+            "event": "field_service.delete_completed",
+            "field_id": field_id,
+            "owner_user_id": user_id,
+            **related_delete_counts
+        }
+    )
+
+
+def _delete_related_field_records(field_id):
+    deleted_crop_analyses = CropAnalysis.query.filter_by(field_id=field_id).delete(
+        synchronize_session=False
+    )
+    deleted_weather_data = WeatherData.query.filter_by(field_id=field_id).delete(
+        synchronize_session=False
+    )
+    deleted_reports = Report.query.filter_by(field_id=field_id).delete(
+        synchronize_session=False
+    )
+
+    return {
+        "deleted_crop_analyses": deleted_crop_analyses,
+        "deleted_weather_data": deleted_weather_data,
+        "deleted_reports": deleted_reports
+    }
 
 
 def import_fields_from_csv(file_stream, user_id):
