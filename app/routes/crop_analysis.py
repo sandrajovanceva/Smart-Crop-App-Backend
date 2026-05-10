@@ -33,11 +33,12 @@ def analyze_crop():
     user_id = get_jwt_identity()
     data = request.get_json(silent=True) or {}
 
-    crop, location, country, lat, lon = resolve_crop_location(data, user_id)
+    crop, location, country, lat, lon, field = resolve_crop_location(data, user_id)
 
     analysis_prompt = build_crop_analysis_prompt(
         crop=crop,
-        location=location
+        location=location,
+        field=field
     )
 
     advice_response = get_cached_or_generate_advice(
@@ -75,8 +76,25 @@ def analyze_crop():
     return jsonify(response_data), 200
 
 
-def build_crop_analysis_prompt(crop, location):
+def build_crop_analysis_prompt(crop, location, field=None):
     today = datetime.utcnow().date().isoformat()
+
+    field_details = ""
+    if field:
+        parts = []
+        if field.soil_type:
+            parts.append(f"- soil type: {field.soil_type}")
+        if field.irrigation_type:
+            parts.append(f"- irrigation: {field.irrigation_type}")
+        if field.size:
+            unit = field.size_unit or "hectares"
+            parts.append(f"- field size: {field.size} {unit}")
+        if field.planting_date:
+            parts.append(f"- planting date: {field.planting_date.isoformat()}")
+        if field.notes and field.notes.strip():
+            parts.append(f"- farmer notes: {field.notes.strip()}")
+        if parts:
+            field_details = "\nField details:\n" + "\n".join(parts)
 
     return f"""
 You are an agricultural crop health analysis assistant.
@@ -84,7 +102,7 @@ You are an agricultural crop health analysis assistant.
 Create a crop health analysis for:
 - crop: {crop}
 - location: {location}
-- current date: {today}
+- current date: {today}{field_details}
 
 Use the provided weather data when analyzing crop health.
 
@@ -115,18 +133,15 @@ The JSON must have exactly this structure:
   "conditions": [
     {{
       "label": "Temperature",
-      "value": "value with unit",
-      "color": "text-green-600"
+      "value": "value with unit"
     }},
     {{
       "label": "Humidity",
-      "value": "value with unit",
-      "color": "text-blue-600"
+      "value": "value with unit"
     }},
     {{
       "label": "Rainfall",
-      "value": "value with unit",
-      "color": "text-cyan-600"
+      "value": "value with unit"
     }}
   ],
   "disease_risks": [

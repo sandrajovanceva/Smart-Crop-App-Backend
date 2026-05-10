@@ -1,6 +1,8 @@
 import os
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
@@ -10,11 +12,45 @@ from app.errors import ConfigurationError, ExternalServiceError
 
 
 class WeatherService:
-    """Сервис за комуникација со OpenWeather API (бесплатен план).
-    Локацијата се задава само со име на место (град/село/регион)."""
-
     BASE_URL = "https://api.openweathermap.org/data/2.5"
     GEO_URL = "https://api.openweathermap.org/geo/1.0"
+
+    _weather_cache: dict = {}
+    _weather_cache_lock = threading.Lock()
+    _WEATHER_CACHE_MINUTES = 15
+
+    @classmethod
+    def _cache_key(cls, lat, lon):
+        return (round(float(lat), 2), round(float(lon), 2))
+
+    @classmethod
+    def _get_from_cache(cls, lat, lon):
+        key = cls._cache_key(lat, lon)
+        with cls._weather_cache_lock:
+            entry = cls._weather_cache.get(key)
+        if entry:
+            ts, data = entry
+            if time.time() - ts < cls._WEATHER_CACHE_MINUTES * 60:
+                return data
+        return None
+
+    @classmethod
+    def _set_in_cache(cls, lat, lon, data):
+        key = cls._cache_key(lat, lon)
+        with cls._weather_cache_lock:
+            cls._weather_cache[key] = (time.time(), data)
+
+    def _fetch_parallel(self, lat, lon):
+        app = current_app._get_current_object()
+
+        def with_ctx(fn, *args):
+            with app.app_context():
+                return fn(*args)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_current = executor.submit(with_ctx, self._fetch_current, lat, lon)
+            f_forecast = executor.submit(with_ctx, self._fetch_forecast, lat, lon)
+            return f_current.result(), f_forecast.result()
 
     def __init__(self):
         self.api_key = os.getenv("WEATHER_API_KEY")
@@ -22,10 +58,17 @@ class WeatherService:
             raise ConfigurationError("WEATHER_API_KEY не е поставен во .env фајлот")
 
     def get_weather_by_coords(self, lat, lon, location_name=None):
-        current = self._fetch_current(lat, lon)
-        forecast = self._fetch_forecast(lat, lon)
+        cached = self._get_from_cache(lat, lon)
+        if cached:
+            current_app.logger.info(
+                "weather cache hit",
+                extra={"event": "weather_service.cache_hit", "lat": lat, "lon": lon}
+            )
+            return cached
 
-        return {
+        current, forecast = self._fetch_parallel(lat, lon)
+
+        result = {
             "location": {
                 "searched_name": location_name,
                 "found_name": current.get("name") or location_name,
@@ -39,6 +82,8 @@ class WeatherService:
             "forecast_24h": self._format_24h(forecast),
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
+        self._set_in_cache(lat, lon, result)
+        return result
 
     def get_weather_by_location(self, location_name, country_code=None):
         current_app.logger.info(
@@ -58,10 +103,17 @@ class WeatherService:
         lat = coords["lat"]
         lon = coords["lon"]
 
-        current = self._fetch_current(lat, lon)
-        forecast = self._fetch_forecast(lat, lon)
+        cached = self._get_from_cache(lat, lon)
+        if cached:
+            current_app.logger.info(
+                "weather cache hit",
+                extra={"event": "weather_service.cache_hit", "location": location_name}
+            )
+            return cached
 
-        return {
+        current, forecast = self._fetch_parallel(lat, lon)
+
+        result = {
             "location": {
                 "searched_name": location_name,
                 "found_name": coords["name"],
@@ -75,6 +127,8 @@ class WeatherService:
             "forecast_24h": self._format_24h(forecast),
             "agricultural_alerts": self._build_alerts(current, forecast),
         }
+        self._set_in_cache(lat, lon, result)
+        return result
 
     def search_locations(self, query, country_code=None, limit=5):
         current_app.logger.info(
@@ -117,6 +171,14 @@ class WeatherService:
             )
             raise ExternalServiceError("Не може да се пребараат временски локации") from e
 
+    _STRIP_PREFIXES = ("city of ", "municipality of ")
+    _STRIP_SUFFIXES = (
+        " district", " region", " oblast", " province", " county",
+        " municipality", " okrug", " rayon", " municipal district",
+        " муниципальный округ", " муниципальный район",
+        " городской округ", " район", " область", " край", " округ",
+    )
+
     def _geocode(self, location_name, country_code):
         queries = []
         if location_name and isinstance(location_name, str):
@@ -125,14 +187,23 @@ class WeatherService:
                 queries.append(raw_name)
 
                 lowered = raw_name.lower()
-                if lowered.startswith("city of "):
-                    simplified = raw_name[8:].strip()
-                    if simplified:
-                        queries.append(simplified)
-                elif lowered.startswith("municipality of "):
-                    simplified = raw_name[16:].strip()
-                    if simplified:
-                        queries.append(simplified)
+                for prefix in self._STRIP_PREFIXES:
+                    if lowered.startswith(prefix):
+                        simplified = raw_name[len(prefix):].strip()
+                        if simplified:
+                            queries.append(simplified)
+                        break
+
+                for suffix in self._STRIP_SUFFIXES:
+                    if lowered.endswith(suffix):
+                        simplified = raw_name[: len(raw_name) - len(suffix)].strip()
+                        if simplified:
+                            queries.append(simplified)
+                        break
+
+                first_word = raw_name.split()[0]
+                if first_word not in queries:
+                    queries.append(first_word)
 
         if not queries:
             return None
@@ -150,6 +221,26 @@ class WeatherService:
             if result:
                 return result
 
+        return None
+
+    def country_from_coords(self, lat, lon):
+        params = {"lat": lat, "lon": lon, "limit": 1, "appid": self.api_key}
+        try:
+            r = requests.get(f"{self.GEO_URL}/reverse", params=params, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            if data:
+                return data[0].get("country")
+        except requests.RequestException as e:
+            current_app.logger.warning(
+                f"Reverse geocoding failed: {e}",
+                extra={
+                    "class_name": self.__class__.__name__,
+                    "event": "weather_service.reverse_geocoding_failed",
+                    "lat": lat,
+                    "lon": lon,
+                }
+            )
         return None
 
     def _geocode_direct(self, query):
@@ -294,19 +385,19 @@ class WeatherService:
             alerts.append({
                 "severity": "high",
                 "type": "frost_risk",
-                "message": "Многу ниска температура - ризик од мраз за чувствителни култури"
+                "message": "Very low temperature - frost risk for sensitive crops"
             })
         if current_wind >= 10:
             alerts.append({
                 "severity": "medium",
                 "type": "strong_wind",
-                "message": "Силен ветер - не е препорачливо прскање"
+                "message": "Strong wind - spraying not recommended"
             })
         if current_humidity >= 85 and current_temp >= 15:
             alerts.append({
                 "severity": "medium",
                 "type": "fungal_risk",
-                "message": "Висока влажност и топло време - ризик од габични болести"
+                "message": "High humidity and warm weather - risk of fungal diseases"
             })
 
         frost_days = []
@@ -328,7 +419,7 @@ class WeatherService:
             alerts.append({
                 "severity": "high",
                 "type": "upcoming_frost",
-                "message": f"Можен мраз на следниве денови: {', '.join(formatted_frost)}",
+                "message": f"Possible frost on the following days: {', '.join(formatted_frost)}",
                 "dates": formatted_frost,
             })
         if heavy_rain_days:
@@ -336,7 +427,7 @@ class WeatherService:
             alerts.append({
                 "severity": "medium",
                 "type": "heavy_rain",
-                "message": f"Очекувани обилни врнежи: {', '.join(formatted_rain)}",
+                "message": f"Expected heavy rainfall: {', '.join(formatted_rain)}",
                 "dates": formatted_rain,
             })
 
