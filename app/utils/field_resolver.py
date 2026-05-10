@@ -12,7 +12,7 @@ def resolve_crop_location(data, user_id):
             raise NotFoundError("Field not found")
 
         country = data.get("country") or field.country
-        return field.crop_type, field.location, country, field.latitude, field.longitude
+        return field.crop_type, field.location, country, field.latitude, field.longitude, field
 
     crop = data.get("crop")
     location = data.get("location")
@@ -21,4 +21,4 @@ def resolve_crop_location(data, user_id):
     if not crop or not location:
         raise BadRequestError("Missing required fields: crop, location or field_id")
 
-    return crop, location, country, None, None
+    return crop, location, country, None, None, None

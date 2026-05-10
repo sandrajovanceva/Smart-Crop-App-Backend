@@ -8,7 +8,6 @@ class Report(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     report_type = db.Column(db.String(50))
-    file_path = db.Column(db.String(500))
     file_size = db.Column(db.Float)
     status = db.Column(db.String(50), default='Completed')
     summary = db.Column(db.Text)
@@ -24,6 +23,8 @@ class Report(db.Model):
     def _size_label(self):
         if self.file_size is None:
             return "—"
+        if self.file_size < 1:
+            return f"{round(self.file_size * 1024, 1)} KB"
         return f"{self.file_size:.1f} MB"
 
     def to_dict(self, include_payload=False):

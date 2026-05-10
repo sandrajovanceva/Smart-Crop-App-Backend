@@ -29,8 +29,8 @@ class AIService:
 
         self.groq_model = "llama-3.3-70b-versatile"
 
-    def get_crop_advice(self, crop_name, weather_data, user_question=None):
-        system_prompt = self._build_system_prompt()
+    def get_crop_advice(self, crop_name, weather_data, user_question=None, system_prompt=None):
+        system_prompt = system_prompt or self._build_system_prompt()
         user_prompt = self._build_user_prompt(crop_name, weather_data, user_question)
 
         try:
@@ -129,17 +129,7 @@ class AIService:
 
                     CRITICAL: Respond ONLY with a valid JSON object, no additional text,
                     no markdown code blocks, no explanations before or after the JSON.
-
-                    STRICT JSON FORMAT:
-                    {
-                      "summary": "short overview in 1-2 sentences",
-                      "immediate_actions": ["action 1", "action 2"],
-                      "warnings": ["warning 1"],
-                      "irrigation_advice": "irrigation recommendation",
-                      "pest_disease_risk": "disease and pest risk assessment",
-                      "recommended_activities": ["recommendation 1", "recommendation 2"],
-                      "activities_to_avoid": ["avoid 1", "avoid 2"]
-                    }"""
+                    Always follow the exact JSON structure specified in the user message."""
 
     @staticmethod
     def _build_user_prompt(crop_name, weather_data, user_question):

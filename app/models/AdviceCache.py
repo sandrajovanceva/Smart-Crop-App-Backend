@@ -10,7 +10,7 @@ class AdviceCache(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     crop = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(200), nullable=False)
-    country = db.Column(db.String(10), nullable=False, default="MK")
+    country = db.Column(db.String(10), nullable=True)
     question = db.Column(db.Text, nullable=True)
     response_data = db.Column(db.JSON, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

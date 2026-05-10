@@ -164,7 +164,6 @@ def login():
         additional_claims={"email": user.email}
     )
 
-    # Враќаме и user објектот за да frontend не мора веднаш да повикува /me.
     return jsonify({
         "success": True,
         "message": "Login successful",
@@ -238,7 +237,7 @@ def me():
         extra={"event": "auth.me_started", "authenticated_user_id": user_id}
     )
 
-    user = User.query.get(user_id)
+    user = User.query.filter_by(id=user_id).first()
 
     if not user:
         raise NotFoundError("User not found")

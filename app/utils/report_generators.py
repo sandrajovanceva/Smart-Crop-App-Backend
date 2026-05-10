@@ -22,7 +22,7 @@ def generate_report_payload(field, report_type, data):
     lon = field.longitude
 
     if report_type == "Crop Analysis":
-        prompt = build_crop_analysis_prompt(crop=crop, location=location)
+        prompt = build_crop_analysis_prompt(crop=crop, location=location, field=field)
 
         advice_response = get_cached_or_generate_advice(
             crop=crop,
@@ -43,7 +43,7 @@ def generate_report_payload(field, report_type, data):
         return payload
 
     if report_type == "Disease Risk":
-        prompt = build_disease_prompt(crop=crop, location=location)
+        prompt = build_disease_prompt(crop=crop, location=location, field=field)
 
         advice_response = get_cached_or_generate_advice(
             crop=crop,
@@ -73,7 +73,8 @@ def generate_report_payload(field, report_type, data):
         prompt = build_fertilizer_prompt(
             crop=crop,
             location=location,
-            growth_stage=growth_stage
+            growth_stage=growth_stage,
+            field=field
         )
 
         advice_response = get_cached_or_generate_advice(
@@ -412,8 +413,8 @@ def _summarize_weather_payload(payload, location):
 
     if isinstance(temperature, (int, float)):
         if impact_text:
-            return f"{location}: {temperature}C with {description}; {impact_text}."
-        return f"{location}: {temperature}C with {description}."
+            return f"{location}: {temperature}°C with {description}; {impact_text}."
+        return f"{location}: {temperature}°C with {description}."
 
     if impact_text:
         return f"{location}: {impact_text} based on current conditions and 5-day forecast."

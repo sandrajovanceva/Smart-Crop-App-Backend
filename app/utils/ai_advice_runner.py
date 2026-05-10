@@ -13,6 +13,7 @@ def get_cached_or_generate_advice(
         weather_data=None,
         lat=None,
         lon=None,
+        system_prompt=None,
 ):
     cached = CacheService.get_cached_advice(
         crop=crop,
@@ -40,7 +41,8 @@ def get_cached_or_generate_advice(
         advice = ai_service.get_crop_advice(
             crop_name=crop,
             weather_data=weather_data,
-            user_question=prompt
+            user_question=prompt,
+            system_prompt=system_prompt,
         )
     except ExternalServiceError:
         return {

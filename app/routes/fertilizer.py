@@ -52,12 +52,13 @@ def recommend_fertilizer():
             or "Vegetative"
     )
 
-    crop, location, country, lat, lon = resolve_crop_location(data, user_id)
+    crop, location, country, lat, lon, field = resolve_crop_location(data, user_id)
 
     fertilizer_prompt = build_fertilizer_prompt(
         crop=crop,
         location=location,
-        growth_stage=growth_stage
+        growth_stage=growth_stage,
+        field=field
     )
 
     advice_response = get_cached_or_generate_advice(
@@ -80,8 +81,25 @@ def recommend_fertilizer():
     ), 200
 
 
-def build_fertilizer_prompt(crop, location, growth_stage):
+def build_fertilizer_prompt(crop, location, growth_stage, field=None):
     today = datetime.utcnow().date().isoformat()
+
+    field_details = ""
+    if field:
+        parts = []
+        if field.soil_type:
+            parts.append(f"- soil type: {field.soil_type}")
+        if field.irrigation_type:
+            parts.append(f"- irrigation: {field.irrigation_type}")
+        if field.size:
+            unit = field.size_unit or "hectares"
+            parts.append(f"- field size: {field.size} {unit}")
+        if field.planting_date:
+            parts.append(f"- planting date: {field.planting_date.isoformat()}")
+        if field.notes and field.notes.strip():
+            parts.append(f"- farmer notes: {field.notes.strip()}")
+        if parts:
+            field_details = "\nField details:\n" + "\n".join(parts)
 
     return f"""
 You are an agricultural fertilizer recommendation assistant.
@@ -90,7 +108,7 @@ Create a structured fertilizer recommendation for:
 - crop: {crop}
 - location: {location}
 - growth stage: {growth_stage}
-- current date: {today}
+- current date: {today}{field_details}
 
 Use the provided weather data when deciding the fertilizer recommendation.
 

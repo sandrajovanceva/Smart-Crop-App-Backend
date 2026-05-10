@@ -2,7 +2,7 @@ import csv
 import io
 import json
 import textwrap
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from flask import Blueprint, current_app, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -96,79 +96,7 @@ def list_reports():
     return jsonify({
         "success": True,
         "reports": [r.to_dict() for r in reports],
-        "stats": _compute_stats(user_id, reports)
     }), 200
-
-
-def _compute_stats(user_id, reports):
-    """Брои реални метрики за stat картичките во ReportsPage."""
-    one_month_ago = datetime.utcnow() - timedelta(days=30)
-    one_week_ago = datetime.utcnow() - timedelta(days=7)
-
-    total = len(reports)
-
-    new_this_month = sum(
-        1 for report in reports
-        if report.created_at and report.created_at >= one_month_ago
-    )
-
-    field_ids = {
-        report.field_id for report in reports
-        if report.field_id
-    }
-
-    pdf_downloads_this_week = sum(
-        report.pdf_download_count or 0
-        for report in reports
-        if report.last_downloaded_at
-        and report.last_downloaded_at >= one_week_ago
-    )
-
-    ai_recommendations = sum(
-        1 for report in reports
-        if report.report_type in {
-            "Crop Analysis",
-            "Disease Risk",
-            "Fertilizer",
-            "Weather Analysis",
-            "Irrigation",
-        }
-    )
-
-    return {
-        "total_reports": total,
-        "new_this_month": new_this_month,
-        "fields_analyzed": len(field_ids),
-        "ai_recommendations": ai_recommendations,
-        "pdf_downloads_this_week": pdf_downloads_this_week,
-
-        "cards": [
-            {
-                "label": "Total Reports",
-                "value": str(total),
-                "change": f"+{new_this_month} this month",
-                "iconName": "FileText"
-            },
-            {
-                "label": "PDF Downloads",
-                "value": str(pdf_downloads_this_week),
-                "change": "This week",
-                "iconName": "Download"
-            },
-            {
-                "label": "Fields Analyzed",
-                "value": str(len(field_ids)),
-                "change": "Active fields",
-                "iconName": "BarChart3"
-            },
-            {
-                "label": "AI Recommendations",
-                "value": str(ai_recommendations),
-                "change": "Generated insights",
-                "iconName": "Brain"
-            }
-        ]
-    }
 
 
 def _resolve_report_summary(report):
